@@ -53,6 +53,10 @@ Test.assert.equal(reloaded.status, "Completed", "reload should retain mission st
 mission_log.open_window()
 Test.wait.frames(5)
 Test.assert.true_(mission_log.window_visible(), "archive window should be visible")
+Test.assert.equal(
+    mission_log.ui_stack(),
+    "UitkForKsp2.Controls.AppShell",
+    "archive window should use Redux's KSP 2 AppShell")
 Test.capture.screenshot("mission-log-debrief", {
     scale = 1,
     hideUI = false,

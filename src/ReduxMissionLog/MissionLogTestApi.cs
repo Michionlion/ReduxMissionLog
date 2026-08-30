@@ -125,6 +125,8 @@ namespace ReduxMissionLog
             }));
             api.Set("window_visible", Callback("ReduxMissionLog.window_visible", (context, args) =>
                 DynValue.NewBoolean(_window.Visible)));
+            api.Set("ui_stack", Callback("ReduxMissionLog.ui_stack", (context, args) =>
+                DynValue.NewString(_window.UiStack)));
             api.Set("scenario_launch", Callback("ReduxMissionLog.scenario_launch", (context, args) =>
             {
                 MissionRecord mission = _tracker.ScenarioLaunch(

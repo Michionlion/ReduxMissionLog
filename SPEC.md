@@ -85,6 +85,10 @@ Version 0.2 delivers:
 
 The deterministic resolver suite and installed-mod semantic suite validate these rules. The existing real-launch test remains the end-to-end lifecycle regression. Physical live docking and undocking adapter smokes remain fixture-dependent and must be reported separately from resolver coverage.
 
+## Native UI refresh (0.3)
+
+Version 0.3 moves the archive to Redux's shared KSP 2 UI stack. The Mission Log uses the common app shell, panel skin, controls, scaling, input behavior, sounds, dragging, and resizing while keeping the information architecture and mission-tree actions simple.
+
 ## Later extensions
 
 - Kerbal career pages, records, ribbons, and mission patches.

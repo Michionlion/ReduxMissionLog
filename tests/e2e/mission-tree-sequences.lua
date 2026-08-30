@@ -77,6 +77,10 @@ Test.assert.equal(mission(ab.missionId).parentMissionId, abc.missionId, "reload 
 assert_valid("complex tree reload", 1, 6)
 mission_log.open_window()
 Test.wait.frames(5)
+Test.assert.equal(
+    mission_log.ui_stack(),
+    "UitkForKsp2.Controls.AppShell",
+    "mission tree should render in Redux's KSP 2 AppShell")
 Test.capture.screenshot("mission-tree-nested", {
     scale = 1,
     hideUI = false,

@@ -49,10 +49,16 @@ $references = @(
     'Newtonsoft.Json.dll',
     'ReduxLib.dll',
     'SpaceWarp2.dll',
+    'UitkForKsp2.dll',
+    'uitkforksp2.controls.Runtime.dll',
+    'Unity.Addressables.dll',
+    'Unity.ResourceManager.dll',
     'UnityEngine.dll',
     'UnityEngine.CoreModule.dll',
-    'UnityEngine.IMGUIModule.dll',
     'UnityEngine.InputLegacyModule.dll',
+    'UnityEngine.PropertiesModule.dll',
+    'UnityEngine.TextRenderingModule.dll',
+    'UnityEngine.UIElementsModule.dll',
     'UnityEngine.UIModule.dll'
 ) | ForEach-Object { Join-Path $managed $_ }
 

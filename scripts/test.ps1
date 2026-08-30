@@ -46,6 +46,18 @@ $treeE2e = Get-Content -LiteralPath $treeE2ePath -Raw
 Assert-True ($treeE2e -match 'scenario_dock') 'Mission-tree E2E suite does not cover docking.'
 Assert-True ($treeE2e -match 'scenario_split') 'Mission-tree E2E suite does not cover separation.'
 Assert-True ($treeE2e -match 'validate_tree') 'Mission-tree E2E suite does not validate tree invariants.'
+Assert-True ($e2e -match 'UitkForKsp2\.Controls\.AppShell') 'E2E test does not verify the native Redux UI stack.'
+
+Write-Host 'Checking KSP 2 UI integration...'
+$windowSource = Get-Content -LiteralPath (Join-Path $repoRoot 'src\ReduxMissionLog\MissionLogWindow.cs') -Raw
+Assert-True ($windowSource -match 'new AppShell') 'Mission Log does not use the Redux AppShell.'
+Assert-True ($windowSource -match 'InvertedCornerBox') 'Mission Log does not use the shared KSP 2 panel control.'
+Assert-True ($windowSource -match 'UseStockScale = true') 'Mission Log does not opt into stock UI scaling.'
+Assert-True ($windowSource -match 'BlockGameInput = true') 'Mission Log does not block flight input beneath its window.'
+Assert-True ($windowSource -match 'EnableUiSounds') 'Mission Log does not enable KSP 2 UI sounds.'
+Assert-True ($windowSource -notmatch 'GUILayout|GUI\.Window') 'Legacy IMGUI window code is still present.'
+$modSource = Get-Content -LiteralPath (Join-Path $repoRoot 'src\ReduxMissionLog\ReduxMissionLogMod.cs') -Raw
+Assert-True ($modSource -notmatch 'OnGUI') 'The mod still exposes an IMGUI render loop.'
 
 $lineageTests = Join-Path $PSScriptRoot 'test-lineage.ps1'
 if (Test-Path -LiteralPath $lineageTests) {

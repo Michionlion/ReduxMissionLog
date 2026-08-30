@@ -21,7 +21,9 @@ namespace ReduxMissionLog
                 store,
                 message => SWLogger.LogInfo(message),
                 message => SWLogger.LogError(message));
-            _window = new MissionLogWindow(_tracker);
+            _window = new MissionLogWindow(
+                _tracker,
+                message => SWLogger.LogError(message));
             _topology = new MissionTopologyCoordinator(
                 _tracker,
                 message => SWLogger.LogInfo(message),
@@ -53,19 +55,12 @@ namespace ReduxMissionLog
             {
                 _nextObservation = now + 0.25f;
                 _tracker.Observe(now);
+                _window.RefreshIfVisible();
             }
             if (_testApi != null && now >= _nextTestRegistration)
             {
                 _nextTestRegistration = now + 1f;
                 _testApi.TryRegister();
-            }
-        }
-
-        private void OnGUI()
-        {
-            if (_window != null)
-            {
-                _window.Draw();
             }
         }
 
@@ -85,6 +80,11 @@ namespace ReduxMissionLog
             {
                 _testApi.Dispose();
                 _testApi = null;
+            }
+            if (_window != null)
+            {
+                _window.Dispose();
+                _window = null;
             }
         }
 

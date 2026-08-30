@@ -40,6 +40,19 @@ $e2e = Get-Content -LiteralPath (Join-Path $repoRoot 'tests\e2e\mission-lifecycl
 Assert-True ($e2e -match 'Test\.mod\.extension\("ReduxMissionLog"\)') 'E2E test does not use the mod-owned semantic API.'
 Assert-True ($e2e -match 'Test\.flight\.stage\(\)') 'E2E test does not exercise a real launch.'
 Assert-True ($e2e -match 'reload_archive') 'E2E test does not verify disk reload.'
+$treeE2ePath = Join-Path $repoRoot 'tests\e2e\mission-tree-sequences.lua'
+Assert-True (Test-Path -LiteralPath $treeE2ePath) 'Mission-tree E2E suite is missing.'
+$treeE2e = Get-Content -LiteralPath $treeE2ePath -Raw
+Assert-True ($treeE2e -match 'scenario_dock') 'Mission-tree E2E suite does not cover docking.'
+Assert-True ($treeE2e -match 'scenario_split') 'Mission-tree E2E suite does not cover separation.'
+Assert-True ($treeE2e -match 'validate_tree') 'Mission-tree E2E suite does not validate tree invariants.'
+
+$lineageTests = Join-Path $PSScriptRoot 'test-lineage.ps1'
+if (Test-Path -LiteralPath $lineageTests) {
+    Write-Host 'Running deterministic mission-lineage scenarios...'
+    & $lineageTests -GameRoot $GameRoot -UnityRoot $UnityRoot
+    Assert-True ($LASTEXITCODE -eq 0) "test-lineage.ps1 exited with $LASTEXITCODE"
+}
 
 Write-Host 'Compiling the in-game mod...'
 & (Join-Path $PSScriptRoot 'build.ps1') -GameRoot $GameRoot -UnityRoot $UnityRoot

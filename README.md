@@ -1,19 +1,24 @@
 # Redux Mission Log
 
-Redux Mission Log is an early KSP 2 Redux mod that quietly records flights as readable mission stories. Version 0.1 creates a record for the active vessel, captures important milestones and peak statistics, remembers crew and destinations, and presents the result in a simple in-game archive.
+Redux Mission Log is a KSP 2 Redux mod that quietly records flights as readable mission stories. Version 0.2 preserves launches, docked expeditions, lander sorties, reunions, crew, destinations, milestones, and outcomes as browsable mission trees.
 
 Press **F7** in KSP 2 to open the Mission Log window.
 
-## Current scope
+## Released scope (0.2)
 
-- Automatic per-vessel mission creation in flight.
+- Automatic mission creation and vessel-identity continuity in flight.
 - Launch, situation, body, orbit, landing, and splash milestones.
 - Crew, visited bodies, maximum altitude, speed, and g-force.
 - Editable mission title and notes plus manual completion.
+- Docking independent craft creates a `Combined` parent containing both launch histories.
+- Splitting or undocking resumes a known child or creates a `Sortie` child.
+- Re-docking a sortie closes it as rejoined without adding needless wrapper missions.
+- Manual **Combine**, **Adopt under**, **Unlink**, and binding-repair controls correct uncertain cases.
+- Schema-1 archives migrate to the schema-2 mission forest.
 - Local JSON persistence outside KSP save files.
-- Automated in-game lifecycle coverage through ReduxTestHarness.
+- Automated resolver and real-flight coverage through ReduxTestHarness.
 
-This is a first vertical slice, not a claim that every docking, split, merge, destruction, or recovery boundary is already solved. See [SPEC.md](SPEC.md) for the product direction and explicit boundaries.
+See [SPEC.md](SPEC.md) for the exact topology-resolution rules.
 
 ## Build and install
 
@@ -39,7 +44,11 @@ pwsh -NoProfile -File scripts/install.ps1
 pwsh -NoProfile -File scripts/run-e2e.ps1
 ```
 
-The runner switches Mission Log to an isolated test archive, launches KSP 2, loads a real save fixture, stages a real vessel, verifies recorded launch data, completes and reloads the archive, and captures the actual in-game archive UI. It never resets the player's normal archive.
+The runner launches KSP 2 twice against isolated archives. The mission-tree suite asserts exact results for independent and nested docking, splits, lander reunions, identity changes, sibling merges, loss, idempotency, manual corrections, and persistence. The lifecycle regression loads a real save, stages a real vessel, verifies launch telemetry, completes and reloads the archive, and captures the in-game UI. It never resets the player's normal archive.
+
+The automatic KSP topology adapter uses Redux's public docking, split, undock, recovery, destruction, and vessel-lifecycle APIs. A physical docking/undocking smoke still requires a reproducible local save fixture; the broad deterministic resolver coverage does not pretend to be that adapter smoke. All tests remain in this repository, while ReduxTestHarness stays the generic enabling stack.
+
+The current validated baseline is 26 compiled resolver/migration scenarios with 1,337 assertions, 107 installed-mod mission-tree assertions in KSP, and 14 installed-mod real-launch assertions.
 
 KSP save fixtures are intentionally not published because they can contain campaign and player data. To reproduce the test, save a controllable vessel named `Fly Safe-15` on Kerbin's launchpad in Flight, review the JSON for private data, and place it at `tests/fixtures/local/launchpad-fly-safe-15.json`. The runner also recognizes the same developer fixture under a sibling ReduxTestHarness checkout.
 

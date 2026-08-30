@@ -1,6 +1,4 @@
 using SpaceWarp2.API.Mods;
-using KSP.Game;
-using KSP.Messages;
 using UnityEngine;
 
 namespace ReduxMissionLog
@@ -10,12 +8,9 @@ namespace ReduxMissionLog
         private MissionTracker _tracker;
         private MissionLogWindow _window;
         private MissionLogTestApi _testApi;
+        private MissionTopologyCoordinator _topology;
         private float _nextObservation;
         private float _nextTestRegistration;
-        private MessageCenter _messageCenter;
-        private SubscriptionHandle _recoveredSubscription;
-        private SubscriptionHandle _destroyedSubscription;
-        private bool _messagesSubscribed;
 
         public override void OnInitialized()
         {
@@ -27,6 +22,10 @@ namespace ReduxMissionLog
                 message => SWLogger.LogInfo(message),
                 message => SWLogger.LogError(message));
             _window = new MissionLogWindow(_tracker);
+            _topology = new MissionTopologyCoordinator(
+                _tracker,
+                message => SWLogger.LogInfo(message),
+                message => SWLogger.LogError(message));
             _testApi = new MissionLogTestApi(
                 _tracker,
                 _window,
@@ -46,6 +45,10 @@ namespace ReduxMissionLog
                 _window.Toggle();
             }
             float now = Time.realtimeSinceStartup;
+            if (_topology != null)
+            {
+                _topology.Update(now);
+            }
             if (now >= _nextObservation)
             {
                 _nextObservation = now + 0.25f;
@@ -55,7 +58,6 @@ namespace ReduxMissionLog
             {
                 _nextTestRegistration = now + 1f;
                 _testApi.TryRegister();
-                EnsureMessageSubscriptions();
             }
         }
 
@@ -69,7 +71,11 @@ namespace ReduxMissionLog
 
         private void OnDestroy()
         {
-            ReleaseMessageSubscriptions();
+            if (_topology != null)
+            {
+                _topology.Dispose();
+                _topology = null;
+            }
             if (_tracker != null)
             {
                 _tracker.Observe(Time.realtimeSinceStartup);
@@ -82,53 +88,5 @@ namespace ReduxMissionLog
             }
         }
 
-        private void EnsureMessageSubscriptions()
-        {
-            GameInstance game = GameManager.Instance == null ? null : GameManager.Instance.Game;
-            MessageCenter current = game == null ? null : game.Messages;
-            if (current == null || ReferenceEquals(current, _messageCenter))
-            {
-                return;
-            }
-            ReleaseMessageSubscriptions();
-            _messageCenter = current;
-            _recoveredSubscription = current.Subscribe<VesselRecoveredMessage>(OnVesselRecovered);
-            _destroyedSubscription = current.Subscribe<VesselDestroyedMessage>(OnVesselDestroyed);
-            _messagesSubscribed = true;
-        }
-
-        private void ReleaseMessageSubscriptions()
-        {
-            if (_messagesSubscribed)
-            {
-                _recoveredSubscription.Release();
-                _destroyedSubscription.Release();
-                _recoveredSubscription = default(SubscriptionHandle);
-                _destroyedSubscription = default(SubscriptionHandle);
-                _messagesSubscribed = false;
-            }
-            _messageCenter = null;
-        }
-
-        private void OnVesselRecovered(MessageCenterMessage raw)
-        {
-            var message = raw as VesselRecoveredMessage;
-            if (message != null && _tracker != null)
-            {
-                _tracker.CompleteVessel(message.VesselID.ToString(), "Recovered");
-            }
-        }
-
-        private void OnVesselDestroyed(MessageCenterMessage raw)
-        {
-            var message = raw as VesselDestroyedMessage;
-            if (message != null && _tracker != null)
-            {
-                string vesselId = message.Vessel == null
-                    ? message.Guid.ToString()
-                    : message.Vessel.GlobalId.ToString();
-                _tracker.CompleteVessel(vesselId, "Lost");
-            }
-        }
     }
 }

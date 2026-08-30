@@ -41,17 +41,25 @@ if (-not $SkipInstall) {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 
-$arguments = @(
-    '-NoProfile',
-    '-File', $runner,
-    'run', (Join-Path $repoRoot 'tests\e2e\mission-lifecycle.lua'),
-    '-Launch',
-    '-Timeout', $Timeout,
-    '-Fixtures', $Fixtures,
-    '-Results', (Join-Path $repoRoot '.test-results\e2e')
+$suites = @(
+    'mission-tree-sequences.lua',
+    'mission-lifecycle.lua'
 )
-if ($GameRoot) { $arguments += @('-GameRoot', $GameRoot) }
-if ($KeepOpen) { $arguments += '-KeepOpen' }
+foreach ($suite in $suites) {
+    $suiteName = [IO.Path]::GetFileNameWithoutExtension($suite)
+    $arguments = @(
+        '-NoProfile',
+        '-File', $runner,
+        'run', (Join-Path $repoRoot "tests\e2e\$suite"),
+        '-Launch',
+        '-Timeout', $Timeout,
+        '-Fixtures', $Fixtures,
+        '-Results', (Join-Path $repoRoot ".test-results\e2e\$suiteName")
+    )
+    if ($GameRoot) { $arguments += @('-GameRoot', $GameRoot) }
+    if ($KeepOpen) { $arguments += '-KeepOpen' }
 
-& (Get-Command pwsh -ErrorAction Stop).Source @arguments
-exit $LASTEXITCODE
+    & (Get-Command pwsh -ErrorAction Stop).Source @arguments
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+}
+exit 0

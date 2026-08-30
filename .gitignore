@@ -1,0 +1,8 @@
+/build/
+/.test-results/
+*.user
+*.suo
+*.tmp
+*.bak
+/tests/fixtures/**/*.json
+/tests/fixtures/**/*.json.gz

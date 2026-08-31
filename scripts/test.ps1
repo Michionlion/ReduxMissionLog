@@ -32,6 +32,7 @@ $metadata = Get-Content -LiteralPath (Join-Path $repoRoot 'src\ReduxMissionLog\s
     ConvertFrom-Json -AsHashtable
 Assert-True ($metadata.mod_id -eq 'ReduxMissionLog') 'Unexpected SpaceWarp mod ID.'
 Assert-True ($metadata.main_assembly -eq 'ReduxMissionLog.dll') 'Unexpected main assembly.'
+Assert-True ($metadata.version -eq '0.5.0') 'Unexpected Redux Mission Log release version.'
 
 Write-Host 'Checking owned specification and end-to-end contract...'
 Assert-True (Test-Path -LiteralPath (Join-Path $repoRoot 'AGENTS.md')) 'AGENTS.md is missing.'
@@ -48,6 +49,30 @@ Assert-True ($treeE2e -match 'scenario_split') 'Mission-tree E2E suite does not 
 Assert-True ($treeE2e -match 'validate_tree') 'Mission-tree E2E suite does not validate tree invariants.'
 Assert-True ($treeE2e -match 'mission_timeline') 'Mission-tree E2E suite does not verify the resolved timeline.'
 Assert-True ($treeE2e -match 'rendered_timeline_count') 'Mission-tree E2E suite does not compare the UI with its timeline projection.'
+$plannerE2ePath = Join-Path $repoRoot 'tests\e2e\mission-planner.lua'
+Assert-True (Test-Path -LiteralPath $plannerE2ePath) 'Mission-planner E2E suite is missing.'
+$plannerE2e = Get-Content -LiteralPath $plannerE2ePath -Raw
+Assert-True ($plannerE2e -match 'plan_add_vessel') 'Mission-planner E2E suite does not define planned vessels.'
+Assert-True ($plannerE2e -match 'plan_add_objective') 'Mission-planner E2E suite does not define ordered objectives.'
+Assert-True ($plannerE2e -match 'scenario_dock') 'Mission-planner E2E suite does not cover planned docking.'
+Assert-True ($plannerE2e -match 'plan_recompute') 'Mission-planner E2E suite does not reconcile observed progress.'
+Assert-True ($plannerE2e -match 'plan_skip_objective') 'Mission-planner E2E suite does not cover manual resolution.'
+Assert-True ($plannerE2e -match 'reload_archive') 'Mission-planner E2E suite does not verify sidecar reload.'
+Assert-True ($plannerE2e -match 'set_timeline_event_expanded') 'Mission-planner E2E suite does not verify compact timeline expansion.'
+$plannerUnitPath = Join-Path $repoRoot 'tests\unit\MissionPlannerScenarios.cs'
+Assert-True (Test-Path -LiteralPath $plannerUnitPath) 'Deterministic mission-planner scenarios are missing.'
+$plannerOwnedFiles = @(
+    'MissionPlanLaunchService.cs',
+    'MissionPlanModels.cs',
+    'MissionPlanner.cs',
+    'MissionPlannerCoordinator.cs',
+    'MissionPlannerPanel.cs',
+    'MissionPlanStore.cs',
+    'MissionPlanTimelineAdapter.cs'
+)
+foreach ($ownedFile in $plannerOwnedFiles) {
+    Assert-True (Test-Path -LiteralPath (Join-Path $repoRoot "src\ReduxMissionLog\$ownedFile")) "Mission planner source is missing: $ownedFile"
+}
 $galleryE2ePath = Join-Path $repoRoot 'tests\e2e\mission-gallery.lua'
 Assert-True (Test-Path -LiteralPath $galleryE2ePath) 'Mission review gallery suite is missing.'
 $galleryE2e = Get-Content -LiteralPath $galleryE2ePath -Raw
@@ -69,6 +94,9 @@ Assert-True ($windowSource -match 'BlockGameInput = true') 'Mission Log does not
 Assert-True ($windowSource -match 'EnableUiSounds') 'Mission Log does not enable KSP 2 UI sounds.'
 Assert-True ($windowSource -match 'MISSION STORY') 'Mission Log does not put the mission story first.'
 Assert-True ($windowSource -match '_tracker\.GetTimeline') 'Mission Log does not render the shared timeline projection.'
+Assert-True ($windowSource -match 'PointerEnterEvent') 'Mission Log does not expand compact event details on hover.'
+Assert-True ($windowSource -match 'FocusInEvent') 'Mission Log does not expand compact event details for keyboard focus.'
+Assert-True ($windowSource -match 'OpenPlanner') 'Mission Log does not expose its mission-planner workspace.'
 Assert-True ($windowSource -match 'SetReviewScroll') 'Mission Log does not expose semantic gallery scrolling.'
 Assert-True ($windowSource -match 'SetArchiveCollapsed') 'Mission Log does not expose semantic archive collapse for review.'
 Assert-True ($windowSource -notmatch 'Tree peak|Crew in tree|Permanent stats') 'Legacy dashboard-first summary copy remains in the story view.'

@@ -41,12 +41,17 @@ $sources = @(
     (Join-Path $repoRoot 'src\ReduxMissionLog\MissionArchiveStore.cs'),
     (Join-Path $repoRoot 'tests\unit\MissionLineageScenarios.cs')
 )
+$plannerSources = @(
+    (Join-Path $repoRoot 'src\ReduxMissionLog\MissionPlanModels.cs'),
+    (Join-Path $repoRoot 'src\ReduxMissionLog\MissionPlanner.cs'),
+    (Join-Path $repoRoot 'tests\unit\MissionPlannerScenarios.cs')
+)
 $references = @(
     (Join-Path $managed 'netstandard.dll'),
     (Join-Path $managed 'Newtonsoft.Json.dll'),
     (Join-Path $managed 'UnityEngine.CoreModule.dll')
 )
-foreach ($path in @($sources) + @($references)) {
+foreach ($path in @($sources) + @($plannerSources) + @($references)) {
     if (-not (Test-Path -LiteralPath $path)) {
         throw "Required lineage-test input is missing: $path"
     }
@@ -84,4 +89,34 @@ finally {
     $env:MONO_PATH = $previousMonoPath
 }
 
+$plannerExecutable = Join-Path $outputRoot 'ReduxMissionLog.PlannerScenarios.exe'
+$arguments = [Collections.Generic.List[string]]::new()
+$arguments.Add('/nologo')
+$arguments.Add('/target:exe')
+$arguments.Add('/langversion:7.3')
+$arguments.Add('/deterministic+')
+$arguments.Add('/optimize+')
+$arguments.Add('/debug:portable')
+$arguments.Add('/out:' + $plannerExecutable)
+foreach ($reference in $references) { $arguments.Add('/reference:' + $reference) }
+foreach ($source in $plannerSources) { $arguments.Add($source) }
+
+& $mono $compiler @arguments
+if ($LASTEXITCODE -ne 0) {
+    throw "Planner scenario compilation failed with exit code $LASTEXITCODE"
+}
+
+$previousMonoPath = $env:MONO_PATH
+try {
+    $env:MONO_PATH = $managed
+    & $mono $plannerExecutable
+    if ($LASTEXITCODE -ne 0) {
+        throw "Planner scenarios failed with exit code $LASTEXITCODE"
+    }
+}
+finally {
+    $env:MONO_PATH = $previousMonoPath
+}
+
 Write-Host "Lineage scenarios passed: $executable"
+Write-Host "Planner scenarios passed: $plannerExecutable"

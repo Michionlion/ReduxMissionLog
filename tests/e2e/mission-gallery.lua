@@ -410,12 +410,279 @@ Test.assert.equal(
 capture("12-gilly-child-organizer")
 
 assert_valid("gallery after UI review", 5, 13)
-Test.assert.equal(capture_count, 12, "gallery should produce the full ordered capture matrix")
+
+-- Gallery 6: the default event rows stay dense, while hover or keyboard focus
+-- reveals the supporting body, state, source, and timing details for one row.
+open_story("mun-expedition", "top", 8, "Mun expedition compact timeline")
+local compact_timeline = mission_log.mission_timeline("mun-expedition")
+Test.assert.greater(#compact_timeline, 0, "compact timeline should expose an expandable event")
+mission_log.set_timeline_event_expanded(compact_timeline[1].eventId, true)
+Test.wait.frames(3)
+Test.assert.equal(
+    mission_log.expanded_timeline_event_count(),
+    1,
+    "one event should show its hover-equivalent detail")
+capture("13-mun-expedition-timeline-hover-detail")
+mission_log.set_timeline_event_expanded(compact_timeline[1].eventId, false)
+Test.wait.frames(2)
+Test.assert.equal(
+    mission_log.expanded_timeline_event_count(),
+    0,
+    "expanded timeline detail should collapse cleanly")
+
+-- Gallery 7: a two-launch Mun expedition visualizes the complete planner story
+-- from synthetic saved-craft selections and deterministic timeline facts. It
+-- does not claim to press KSP's player-confirmed launch button.
+-- Synthetic scenario records intentionally share the Test API's isolated
+-- campaign, exercising the same campaign-scope guard as the planner suite.
+local planner_campaign = "redux-mission-log-scenarios"
+local planned_expedition = mission_log.create_plan(
+    planner_campaign,
+    "Munark Surface Expedition",
+    "Assemble Munark and Firefly in Kerbin orbit, land at Farside Basin, then reunite for return.")
+local munark_slot = mission_log.plan_add_vessel(
+    planned_expedition.planId,
+    "Munark Orbiter",
+    "Crewed carrier and return vehicle",
+    true)
+local firefly_slot = mission_log.plan_add_vessel(
+    planned_expedition.planId,
+    "Firefly Lander",
+    "Two-seat Mun surface lander",
+    true)
+mission_log.plan_select_vehicle(
+    planned_expedition.planId,
+    munark_slot.slotId,
+    "gallery-saved-munark",
+    "Munark Block II",
+    "Workspaces/Mun/Munark Block II.json",
+    "Vehicle Assembly Building")
+mission_log.plan_select_vehicle(
+    planned_expedition.planId,
+    firefly_slot.slotId,
+    "gallery-saved-firefly",
+    "Firefly Lander A",
+    "Workspaces/Mun/Firefly Lander A.json",
+    "Vehicle Assembly Building")
+
+local planned_steps = {}
+planned_steps.launch_munark = mission_log.plan_add_objective(
+    planned_expedition.planId, "Launch", "Launch Munark Orbiter",
+    munark_slot.slotId, "Kerbin", nil, nil, false)
+planned_steps.orbit_munark = mission_log.plan_add_objective(
+    planned_expedition.planId, "Orbit", "Establish Munark parking orbit",
+    munark_slot.slotId, "Kerbin", "Orbiting", nil, false)
+planned_steps.launch_firefly = mission_log.plan_add_objective(
+    planned_expedition.planId, "Launch", "Launch Firefly Lander",
+    firefly_slot.slotId, "Kerbin", nil, nil, false)
+planned_steps.orbit_firefly = mission_log.plan_add_objective(
+    planned_expedition.planId, "Orbit", "Rendezvous Firefly in Kerbin orbit",
+    firefly_slot.slotId, "Kerbin", "Orbiting", nil, false)
+planned_steps.assemble = mission_log.plan_add_objective(
+    planned_expedition.planId, "Dock", "Dock Firefly with Munark",
+    munark_slot.slotId, "Kerbin", "Orbiting", nil, false,
+    firefly_slot.slotId)
+planned_steps.enter_mun = mission_log.plan_add_objective(
+    planned_expedition.planId, "Body", "Enter the Mun sphere of influence",
+    nil, "Mun", nil, nil, false)
+planned_steps.orbit_mun = mission_log.plan_add_objective(
+    planned_expedition.planId, "Orbit", "Establish a stable Mun orbit",
+    nil, "Mun", "Orbiting", nil, false)
+planned_steps.separate_firefly = mission_log.plan_add_objective(
+    planned_expedition.planId, "Separate", "Separate Firefly for descent",
+    firefly_slot.slotId, "Mun", "Orbiting", nil, false)
+planned_steps.land_firefly = mission_log.plan_add_objective(
+    planned_expedition.planId, "Land", "Land Firefly at Farside Basin",
+    firefly_slot.slotId, "Mun", "Landed", nil, false)
+planned_steps.rejoin = mission_log.plan_add_objective(
+    planned_expedition.planId, "Dock", "Rejoin Munark in Mun orbit",
+    munark_slot.slotId, "Mun", "Orbiting", nil, false,
+    firefly_slot.slotId)
+planned_steps.complete = mission_log.plan_add_objective(
+    planned_expedition.planId, "Complete", "Complete the surface expedition",
+    nil, nil, nil, nil, false)
+mission_log.plan_activate(planned_expedition.planId)
+
+local munark_launch = mission_log.scenario_launch(
+    "gallery-munark-launch", "Munark Orbiter", "v-gallery-munark")
+mission_log.plan_bind_vessel(
+    planned_expedition.planId,
+    munark_slot.slotId,
+    munark_launch.missionId,
+    "v-gallery-munark",
+    munark_launch.events[1].recordedUtc)
+mission_log.scenario_event(
+    munark_launch.missionId, "launch", "Munark cleared Launchpad One",
+    12, "Kerbin", "Flying", "gallery-munark-liftoff")
+Test.wait.frames(1)
+mission_log.scenario_event(
+    munark_launch.missionId, "orbit", "Munark established a 105 km parking orbit",
+    610, "Kerbin", "Orbiting", "gallery-munark-kerbin-orbit")
+Test.wait.frames(1)
+
+local firefly_launch = mission_log.scenario_launch(
+    "gallery-firefly-launch", "Firefly Lander", "v-gallery-firefly")
+mission_log.plan_bind_vessel(
+    planned_expedition.planId,
+    firefly_slot.slotId,
+    firefly_launch.missionId,
+    "v-gallery-firefly",
+    firefly_launch.events[1].recordedUtc)
+mission_log.scenario_event(
+    firefly_launch.missionId, "launch", "Firefly lifted off for rendezvous",
+    15, "Kerbin", "Flying", "gallery-firefly-liftoff")
+Test.wait.frames(1)
+mission_log.scenario_event(
+    firefly_launch.missionId, "orbit", "Firefly matched Munark's orbit",
+    650, "Kerbin", "Orbiting", "gallery-firefly-kerbin-orbit")
+Test.wait.frames(1)
+
+local munark_stack = mission_log.scenario_dock(
+    "v-gallery-munark",
+    "v-gallery-firefly",
+    "v-gallery-munark-stack",
+    "Munark Surface Expedition",
+    "gallery-planner-assembly",
+    false,
+    840,
+    "Kerbin",
+    "Orbiting")
+Test.wait.frames(1)
+mission_log.scenario_event(
+    munark_stack.missionId, "body_changed", "Munark entered the Mun's influence",
+    24800, "Mun", "Flying", "gallery-planner-enter-mun")
+Test.wait.frames(1)
+mission_log.scenario_event(
+    munark_stack.missionId, "orbit", "Munark circularized above Farside Basin",
+    27600, "Mun", "Orbiting", "gallery-planner-mun-orbit")
+Test.wait.frames(1)
+
+local firefly_sortie = mission_log.scenario_split(
+    "v-gallery-munark-stack",
+    "v-gallery-munark-orbiter",
+    "v-gallery-firefly-mun",
+    "Firefly Lander",
+    "travel-gallery-firefly-sortie",
+    "gallery-planner-firefly-separation",
+    28200,
+    "Mun",
+    "Orbiting")
+Test.wait.frames(1)
+mission_log.scenario_event(
+    firefly_sortie.missionId, "landed", "Firefly touched down at Farside Basin",
+    30600, "Mun", "Landed", "gallery-planner-firefly-landed")
+Test.wait.frames(1)
+local munark_reunion = mission_log.scenario_dock(
+    "v-gallery-munark-orbiter",
+    "v-gallery-firefly-mun",
+    "v-gallery-munark-rejoined",
+    "Munark Surface Expedition",
+    "gallery-planner-firefly-rejoin",
+    false,
+    35200,
+    "Mun",
+    "Orbiting")
+Test.wait.frames(1)
+mission_log.scenario_status("v-gallery-munark-rejoined", "Completed")
+Test.wait.frames(2)
+
+planned_expedition = mission_log.plan_recompute(planned_expedition.planId)
+Test.assert.equal(munark_reunion.missionId, munark_stack.missionId, "Munark reunion should preserve the overarching mission")
+local visual_facts = mission_log.plan_facts(planned_expedition.planId)
+Test.assert.equal(#visual_facts, 11, "visual plan should reconcile eleven exact flight facts")
+Test.assert.equal(planned_expedition.status, "Completed", "observed completion should close the visual plan")
+Test.assert.equal(planned_expedition.objectiveCount, 11, "visual plan should keep all eleven mission steps")
+Test.assert.equal(planned_expedition.achievedCount, 11, "every visual-plan step should be achieved")
+Test.assert.equal(planned_expedition.deviationCount, 0, "nominal visual plan should have no deviations")
+
+mission_log.open_mission(munark_stack.missionId)
+Test.wait.frames(6)
+local linked_story_state = mission_log.review_ui_state()
+assert_window_state(linked_story_state, "story", "none", "linked Munark mission story")
+Test.assert.equal(
+    linked_story_state.selectedMissionId,
+    munark_stack.missionId,
+    "linked story should target the completed overarching mission")
+capture("14-munark-linked-plan-story")
+
+-- Gallery 8: a small active plan keeps one deliberate deviation readable.
+local deviation_plan = mission_log.create_plan(
+    planner_campaign,
+    "Ike Survey Route Change",
+    "A concise review case showing an explicit change from the planned capture sequence.")
+local deviation_launch = mission_log.plan_add_objective(
+    deviation_plan.planId, "Launch", "Launch the Ike survey vehicle",
+    nil, "Kerbin", nil, nil, false)
+local deviation_orbit = mission_log.plan_add_objective(
+    deviation_plan.planId, "Orbit", "Capture into the planned Ike survey orbit",
+    nil, "Ike", "Orbiting", nil, false)
+mission_log.plan_activate(deviation_plan.planId)
+mission_log.plan_match_objective(
+    deviation_plan.planId,
+    deviation_launch.objectiveId,
+    "gallery-manual-survey-launch",
+    "Launch confirmed from an imported flight record.")
+mission_log.plan_mark_deviated(
+    deviation_plan.planId,
+    deviation_orbit.objectiveId,
+    "gallery-route-change",
+    "Crew diverted to Duna orbit; the planned Ike capture was intentionally omitted.")
+deviation_plan = mission_log.plan_recompute(deviation_plan.planId)
+Test.assert.equal(deviation_plan.status, "Completed", "fully resolved route-change plan should complete with its deviation retained")
+Test.assert.equal(deviation_plan.achievedCount, 1, "route-change plan should retain its confirmed launch")
+Test.assert.equal(deviation_plan.resolvedCount, 2, "both concise route-change steps should be resolved")
+Test.assert.equal(deviation_plan.deviationCount, 1, "route-change plan should show exactly one deviation")
+
+mission_log.open_planner(planned_expedition.planId)
+Test.wait.frames(6)
+local planner_state = mission_log.planner_ui_state()
+Test.assert.true_(planner_state.visible, "selected plan should keep Mission Log visible")
+Test.assert.equal(planner_state.view, "planner", "selected plan should use the planner view")
+Test.assert.equal(planner_state.selectedPlanId, planned_expedition.planId, "selected completed plan")
+Test.assert.equal(planner_state.status, "Completed", "selected completed plan status")
+Test.assert.equal(
+    planner_state.progress,
+    "11 / 11 achieved; 11 / 11 resolved",
+    "selected completed plan progress")
+Test.assert.equal(planner_state.deviationCount, 0, "selected completed plan deviation count")
+Test.assert.equal(planner_state.renderedPlanCount, 2, "planner index should render both review plans")
+Test.assert.equal(planner_state.renderedVesselCount, 2, "completed plan should render both vessel slots")
+Test.assert.equal(planner_state.renderedObjectiveCount, 11, "completed plan should render every objective")
+Test.assert.equal(planner_state.renderedDeviationCount, 0, "completed plan should render no deviations")
+Test.assert.true_(not planner_state.createEditorVisible, "completed plan should not show the create editor")
+Test.assert.true_(not planner_state.planEditorVisible, "completed plan should not show the plan editor")
+Test.assert.true_(not planner_state.vesselEditorVisible, "completed plan should not show the vessel editor")
+Test.assert.true_(not planner_state.objectiveEditorVisible, "completed plan should not show the objective editor")
+Test.assert.equal(mission_log.ui_stack(), expected_ui_stack, "planner should retain the native KSP UI stack")
+capture("15-munark-completed-mission-plan")
+
+mission_log.open_planner(deviation_plan.planId)
+Test.wait.frames(6)
+local deviation_state = mission_log.planner_ui_state()
+Test.assert.true_(deviation_state.visible, "deviation plan should keep Mission Log visible")
+Test.assert.equal(deviation_state.view, "planner", "deviation plan should use the planner view")
+Test.assert.equal(deviation_state.selectedPlanId, deviation_plan.planId, "selected deviation plan")
+Test.assert.equal(deviation_state.status, "Completed", "selected deviation plan status")
+Test.assert.equal(
+    deviation_state.progress,
+    "1 / 2 achieved; 2 / 2 resolved",
+    "selected deviation plan progress")
+Test.assert.equal(deviation_state.deviationCount, 1, "selected deviation plan count")
+Test.assert.equal(deviation_state.renderedPlanCount, 2, "deviation view should retain both plan cards")
+Test.assert.equal(deviation_state.renderedVesselCount, 0, "concise deviation plan should need no vessel cards")
+Test.assert.equal(deviation_state.renderedObjectiveCount, 2, "concise deviation plan objective rows")
+Test.assert.equal(deviation_state.renderedDeviationCount, 1, "concise deviation should render one detail row")
+capture("16-ike-route-change-deviation")
+
+assert_valid("gallery with planned expedition", 6, 17)
+Test.assert.equal(capture_count, 16, "gallery should produce the full ordered capture matrix")
 Test.report.value("galleryScreenshots", capture_count)
-Test.report.value("galleryRoots", 5)
-Test.report.value("galleryMissions", 13)
+Test.report.value("galleryRoots", 6)
+Test.report.value("galleryMissions", 17)
+Test.report.value("galleryPlans", mission_log.plan_count())
 Test.report.value("galleryArchivePath", mission_log.archive_path())
 Test.report.attach(mission_log.archive_path())
+Test.report.attach(mission_log.plan_path())
 Test.report.note(
-    "Captured linear, nested assembly, sortie reunion, mixed-outcome, needs-review, archive, editor, and organizer states")
+    "Captured compact and expanded timelines, linear and nested missions, correction tools, a completed two-launch mission plan, and a concise deviation review")
 mission_log.end_test_session()

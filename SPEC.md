@@ -9,7 +9,7 @@ Redux Mission Log gives a KSP 2 campaign a memory. It quietly turns flights into
 - Capture meaningful accomplishments automatically.
 - Preserve continuity for vessels, crews, and campaigns.
 - Provide a useful post-flight debrief and a browsable long-term archive.
-- Stay observational: Mission Log records play but does not change physics, progression, or rewards.
+- Stay observational during flight: Mission Log may begin a player-requested launch through KSP's normal flow, but never flies the vessel or changes physics, progression, or rewards.
 - Remain dependable across scene changes, vessel switching, saves, reloads, and mod updates.
 
 ## Core model
@@ -35,6 +35,14 @@ Schema 2 stores a **mission forest**: independent missions are roots, and combin
 
 Tree relationships are structural; milestones remain on the mission leg that recorded them. An overarching mission resolves its descendants into one chronological story, labels every child moment with its source launch or sortie, and preserves that source leg's own flight clock. Repeated structural audit records for one operation resolve to one player-readable docking, separation, or reunion moment.
 
+### Mission plans
+
+A mission plan is a named, persistent outline of player intent. It contains ordered launch slots and objectives: launch, body or SOI arrival, orbit or vessel state, landing, docking or merging, separation or sortie, recovery or completion, and custom steps.
+
+Each launch slot may reference a saved vehicle. When KSP exposes a safe supported path, the player can launch that vehicle from the plan through the normal KSP launch flow. The plan then links the launched vessel and its evolving mission tree without taking control of flight. Multiple planned launches may therefore become one combined mission while retaining their individual histories.
+
+Every step is visibly current, achieved, pending, skipped, or in need of correction. The plan records concise deviations instead of treating improvisation as failure. Players can match an observed mission or vessel to a step, skip or reorder future steps, and correct mistaken links. Plans use safe local sidecar data, tolerate missing vehicles or mission records, and do not invalidate existing archives or saves.
+
 ## Player experience
 
 ### In flight
@@ -54,7 +62,13 @@ At mission end, the player sees the same mission story with its outcome added to
 
 ### Archive
 
-The default window presents one selected mission story: a compact identity header followed immediately by a full-width timeline. The archive is a separate expandable tree view. Editing and relationship repair open only when explicitly requested, so they never compete with the story. Selecting a combined mission, launch, or sortie reveals its own parent path, children, and sourced timeline without presenting raw telemetry.
+The default window presents one selected mission story: a dense identity header followed immediately by a full-width timeline. Each event is one compact, single-line row; hover or keyboard focus expands its context, source mission, body, and situation. Leg labels keep independent mission clocks readable across launches and sorties. Notes wrap in the editor, and a mission's review reason remains visible until corrected.
+
+The archive is a separate expandable tree view. Editing, planning, and relationship repair open only when explicitly requested, so they never compete with the story. Selecting a combined mission, launch, or sortie reveals its own parent path, children, and sourced timeline without presenting raw telemetry.
+
+### Mission planner
+
+The planner is a secondary workspace reached from the story or archive. It shows saved plans, their ordered vessels and objectives, overall progress, the current step, and short deviations. Creating, reordering, matching, skipping, correcting, or explicitly launching a saved vehicle are deliberate player actions; ordinary mission recording remains automatic and quiet.
 
 ### Kerbal record
 
@@ -99,6 +113,18 @@ Version 0.4 makes the chronological mission story the primary product surface:
 - Overarching missions include their descendant moments once, identify the source launch or sortie, and retain each leg's honest `T+` clock.
 - Archive browsing, editing, completion, and tree organization remain available as focused secondary views.
 
+## Mission Planner and compact story (0.5)
+
+Version 0.5 adds player-authored intent without turning Mission Log into a flight computer:
+
+- Named plans persist ordered launch slots and mission objectives.
+- Launch slots may select saved vehicles and, where supported, invoke their normal KSP launch flow.
+- Observed vessels and mission trees link to plans, including multi-launch campaigns that later dock or merge.
+- Progress distinguishes current, achieved, pending, skipped, and corrected steps, with concise deviations when reality differs from the outline.
+- Manual matching, skipping, reordering, and link correction keep inference player-controlled.
+- The primary story becomes denser: one-line events expand on hover or focus, clocks remain leg-readable, notes wrap, and review reasons stay visible.
+- Plans remain local, recoverable, and compatible with existing mission archives and KSP saves.
+
 ## Later extensions
 
 - Kerbal career pages, records, ribbons, and mission patches.
@@ -106,10 +132,12 @@ Version 0.4 makes the chronological mission story the primary product surface:
 - Program-level statistics and campaign retrospectives.
 - Science, EVA, colony, and interstellar milestones.
 - Exportable mission cards and carefully bounded replay summaries.
+- Reusable plan templates and program-level planning summaries after the core planner is proven reliable.
 
 ## Non-goals
 
-- Autopilot, maneuver planning, contracts, resources, life support, or economy.
+- Autopilot, maneuver-node creation or execution, automated flight control, contracts, resources, life support, or economy.
+- Treating a plan as a rigid contract, reward system, or prerequisite for ordinary mission recording.
 - Gameplay bonuses, penalties, or competitive scoring.
 - Continuous black-box telemetry recording.
 - Cloud accounts, online services, or multiplayer synchronization in the initial product.
@@ -122,11 +150,12 @@ Version 0.4 makes the chronological mission story the primary product surface:
 - Human-readable and celebratory.
 - Editable when inference is imperfect.
 - Local, transparent, and recoverable.
+- Player-directed when an action can change scenes or begin a launch.
 - Reliable before elaborate.
 
 ## Success
 
-A normal mission should leave behind an accurate story with little or no player effort. A docked expedition should preserve every launch, a lander should remain visibly part of its parent expedition, and switching vessels should reveal the right record without changing history.
+A normal mission should leave behind an accurate story with little or no player effort. A docked expedition should preserve every launch, a lander should remain visibly part of its parent expedition, and switching vessels should reveal the right record without changing history. A planned campaign should clearly show what was intended, what happened, and what comes next without constraining how the player flies it.
 
 ## Test strategy
 
@@ -135,3 +164,5 @@ A normal mission should leave behind an accurate story with little or no player 
 - Assert the exact tree, status, aliases, current bindings, projected timeline chronology, structural-event deduplication, source attribution, and persistence result after every transition.
 - Reload schema-1 and schema-2 archives to verify migration and normalization, including missing parents, duplicate bindings, and cycle rejection.
 - Add live docking and undocking smokes for KSP event integration; deterministic resolver scenarios remain the broad behavioral suite.
+- Exercise plan creation, persistence, launch-slot selection, mission matching, progress, deviations, skipping, reordering, correction, and multi-launch merging through deterministic semantic scenarios.
+- Verify compact timeline rendering and semantic expansion in the installed fixture-free suite. Verify actual pointer/focus interaction and the player-confirmed saved-craft launch handoff only in a local UI smoke with a reviewed craft/save fixture; never substitute automated flight for player control or claim that optional smoke when it did not run.

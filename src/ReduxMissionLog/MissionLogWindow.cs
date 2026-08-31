@@ -11,20 +11,36 @@ namespace ReduxMissionLog
 {
     internal sealed class MissionLogWindow : IDisposable
     {
+        private sealed class TimelineExpansionState
+        {
+            public VisualElement Row;
+            public VisualElement Details;
+            public Label Chevron;
+            public bool Hovered;
+            public bool Focused;
+        }
+
         private const float DefaultWidth = 820f;
         private const float DefaultHeight = 700f;
         private const float MinimumWidth = 620f;
         private const float MinimumHeight = 500f;
 
         private readonly MissionTracker _tracker;
+        private readonly MissionPlanner _planner;
+        private readonly MissionPlannerPanel _plannerPanel;
         private readonly Action<string> _logError;
         private readonly HashSet<string> _collapsedMissionIds =
             new HashSet<string>(StringComparer.Ordinal);
+        private readonly HashSet<string> _expandedTimelineEventIds =
+            new HashSet<string>(StringComparer.Ordinal);
+        private readonly Dictionary<string, TimelineExpansionState> _timelineExpansionStates =
+            new Dictionary<string, TimelineExpansionState>(StringComparer.Ordinal);
 
         private UIDocument _document;
         private AppShell _shell;
         private VisualElement _archiveView;
         private VisualElement _storyView;
+        private VisualElement _plannerView;
         private ScrollView _archiveScroll;
         private ScrollView _timelineScroll;
         private VisualElement _archiveTree;
@@ -36,8 +52,11 @@ namespace ReduxMissionLog
         private Label _missionMeta;
         private VisualElement _relationshipRow;
         private InvertedCornerBox _reviewBanner;
+        private Label _reviewText;
         private InvertedCornerBox _noteCard;
         private Label _noteText;
+        private InvertedCornerBox _planBanner;
+        private Label _planText;
         private InvertedCornerBox _editorSheet;
         private TextField _titleField;
         private TextField _notesField;
@@ -50,10 +69,15 @@ namespace ReduxMissionLog
 
         private bool _visible;
         private bool _showArchive;
+        private bool _showPlanner;
         private bool _showEditor;
         private bool _showManage;
+        private bool _followCurrentMission = true;
         private string _selectedMissionId;
         private string _timelineFingerprint;
+        private string _archiveFingerprint;
+        private string _manageFingerprint;
+        private string _linkedPlanId;
         private string _pendingAction;
         private string _pendingSelectedMissionId;
         private string _pendingCurrentMissionId;
@@ -61,16 +85,59 @@ namespace ReduxMissionLog
         private string _pendingPrompt;
         private string _feedback;
 
-        public MissionLogWindow(MissionTracker tracker, Action<string> logError)
+        public MissionLogWindow(
+            MissionTracker tracker,
+            MissionPlanner planner,
+            MissionPlanLaunchService launchService,
+            Action<string> logError,
+            Action<string> info)
         {
             _tracker = tracker;
+            _planner = planner;
             _logError = logError;
+            _plannerPanel = new MissionPlannerPanel(
+                planner,
+                tracker,
+                launchService,
+                logError,
+                info);
         }
 
         public bool Visible { get { return _visible; } }
         public string SelectedMissionId { get { return _selectedMissionId; } }
         public int RenderedTimelineCount { get; private set; }
-        public string ReviewView { get { return _showArchive ? "archive" : "story"; } }
+        public string ReviewView
+        {
+            get { return _showPlanner ? "planner" : (_showArchive ? "archive" : "story"); }
+        }
+        public string SelectedPlanId { get { return _plannerPanel.SelectedPlanId; } }
+        public string SelectedPlanStatus { get { return _plannerPanel.SelectedPlanStatus; } }
+        public string SelectedPlanProgress { get { return _plannerPanel.SelectedPlanProgress; } }
+        public int SelectedPlanDeviationCount
+        {
+            get { return _plannerPanel.SelectedPlanDeviationCount; }
+        }
+        public int RenderedPlanCount { get { return _plannerPanel.RenderedPlanCount; } }
+        public int RenderedPlanVesselCount { get { return _plannerPanel.RenderedVesselCount; } }
+        public int RenderedPlanObjectiveCount { get { return _plannerPanel.RenderedObjectiveCount; } }
+        public int RenderedPlanDeviationCount { get { return _plannerPanel.RenderedDeviationCount; } }
+        public int SavedVehicleCount { get { return _plannerPanel.SavedVehicleCount; } }
+        public bool PlannerCreateEditorVisible
+        {
+            get { return _plannerPanel.CreateEditorVisible; }
+        }
+        public bool PlannerPlanEditorVisible
+        {
+            get { return _plannerPanel.PlanEditorVisible; }
+        }
+        public bool PlannerVesselEditorVisible
+        {
+            get { return _plannerPanel.VesselEditorVisible; }
+        }
+        public bool PlannerObjectiveEditorVisible
+        {
+            get { return _plannerPanel.ObjectiveEditorVisible; }
+        }
         public string ReviewSheet
         {
             get
@@ -87,6 +154,10 @@ namespace ReduxMissionLog
             get { return _archiveTree == null ? 0 : _archiveTree.childCount; }
         }
         public int CollapsedMissionCount { get { return _collapsedMissionIds.Count; } }
+        public int ExpandedTimelineEventCount
+        {
+            get { return _expandedTimelineEventIds.Count; }
+        }
         public float ReviewScrollValue { get { return CurrentReviewScrollValue(); } }
         public float ReviewScrollMaximum { get { return CurrentReviewScrollMaximum(); } }
         public float ReviewScrollNormalized
@@ -149,12 +220,17 @@ namespace ReduxMissionLog
 
             try
             {
+                bool wasVisible = _visible;
                 EnsureCreated();
-                if (string.IsNullOrEmpty(_selectedMissionId))
+                if (!wasVisible)
                 {
                     Select(_tracker.GetCurrent() ?? _tracker.GetLatest());
+                    _followCurrentMission = true;
                 }
-                _showArchive = FindSelected() == null;
+                if (!_showPlanner)
+                {
+                    _showArchive = FindSelected() == null;
+                }
                 Refresh();
                 _document.Show();
                 _shell.BringToFront();
@@ -172,18 +248,22 @@ namespace ReduxMissionLog
 
         public void OpenMission(MissionRecord mission)
         {
-            Select(mission);
-            _showArchive = false;
-            _showEditor = false;
-            _showManage = false;
-            if (_visible)
-            {
-                Refresh();
-            }
-            else
+            if (!_visible)
             {
                 SetVisible(true);
             }
+            if (!_visible)
+            {
+                return;
+            }
+            Select(mission);
+            _followCurrentMission = false;
+            _showPlanner = false;
+            _showArchive = false;
+            _plannerPanel.Hide();
+            _showEditor = false;
+            _showManage = false;
+            Refresh();
         }
 
         public void OpenArchive()
@@ -196,10 +276,51 @@ namespace ReduxMissionLog
             {
                 return;
             }
+            _showPlanner = false;
             _showArchive = true;
+            _plannerPanel.Hide();
             _showEditor = false;
             _showManage = false;
             Refresh();
+        }
+
+        public void OpenPlanner()
+        {
+            OpenPlanner(null);
+        }
+
+        public void OpenPlanner(string planId)
+        {
+            if (!_visible)
+            {
+                SetVisible(true);
+            }
+            if (!_visible)
+            {
+                return;
+            }
+            _showPlanner = true;
+            _showArchive = false;
+            _showEditor = false;
+            _showManage = false;
+            if (string.IsNullOrWhiteSpace(planId))
+            {
+                _plannerPanel.Open();
+            }
+            else
+            {
+                _plannerPanel.Open(planId);
+            }
+            Refresh();
+        }
+
+        public void RefreshSavedVehicles()
+        {
+            _plannerPanel.RefreshSavedVehicles();
+            if (_visible && _showPlanner)
+            {
+                _plannerPanel.Refresh();
+            }
         }
 
         public void OpenEditorForReview(MissionRecord mission)
@@ -246,6 +367,35 @@ namespace ReduxMissionLog
         {
             return !string.IsNullOrWhiteSpace(missionId) &&
                 _collapsedMissionIds.Contains(missionId);
+        }
+
+        public void SetTimelineEventExpanded(string eventId, bool expanded)
+        {
+            if (string.IsNullOrWhiteSpace(eventId))
+            {
+                throw new ArgumentException("A timeline event id is required.", "eventId");
+            }
+            TimelineExpansionState state;
+            if (!_timelineExpansionStates.TryGetValue(eventId, out state))
+            {
+                throw new InvalidOperationException(
+                    "Timeline event is not rendered in the open mission story: " + eventId);
+            }
+            if (expanded)
+            {
+                _expandedTimelineEventIds.Add(eventId);
+            }
+            else
+            {
+                _expandedTimelineEventIds.Remove(eventId);
+            }
+            ApplyTimelineExpansion(eventId, state);
+        }
+
+        public bool IsTimelineEventExpanded(string eventId)
+        {
+            return !string.IsNullOrWhiteSpace(eventId) &&
+                _expandedTimelineEventIds.Contains(eventId);
         }
 
         public void SetReviewScroll(string view, string anchor)
@@ -390,9 +540,43 @@ namespace ReduxMissionLog
 
             BuildArchiveView();
             BuildStoryView();
+            BuildPlannerView();
             body.Add(_archiveView);
             body.Add(_storyView);
+            body.Add(_plannerView);
             _shell.Add(body);
+        }
+
+        private void BuildPlannerView()
+        {
+            _plannerView = new VisualElement { name = "mission-planner-workspace-view" };
+            _plannerView.style.flexGrow = 1f;
+            _plannerView.style.minHeight = 0f;
+            _plannerView.style.minWidth = 0f;
+
+            VisualElement navigation = CreateActionRow();
+            Button story = CreateButton(
+                "Back to story",
+                "Return to the selected mission story",
+                ShowStory);
+            story.style.flexGrow = 0f;
+            story.style.width = 132f;
+            navigation.Add(story);
+            Button archive = CreateButton(
+                "All missions",
+                "Open the mission archive",
+                ShowArchive);
+            archive.style.flexGrow = 0f;
+            archive.style.width = 120f;
+            navigation.Add(archive);
+            VisualElement spacer = new VisualElement();
+            spacer.style.flexGrow = 1f;
+            navigation.Add(spacer);
+            Label mode = CreateMutedLabel("PLANNING WORKSPACE");
+            mode.style.unityTextAlign = TextAnchor.MiddleRight;
+            navigation.Add(mode);
+            _plannerView.Add(navigation);
+            _plannerView.Add(_plannerPanel.Root);
         }
 
         private void BuildArchiveView()
@@ -409,6 +593,13 @@ namespace ReduxMissionLog
             heading.Add(title);
             heading.Add(_archiveCount);
             toolbar.Add(heading);
+            Button plannerButton = CreateButton(
+                "Mission planner",
+                "Open planned missions",
+                OpenPlanner);
+            plannerButton.style.flexGrow = 0f;
+            plannerButton.style.width = 140f;
+            toolbar.Add(plannerButton);
             _backToStoryButton = CreateButton("Back to story", "Return to the selected mission", ShowStory);
             _backToStoryButton.style.flexGrow = 0f;
             _backToStoryButton.style.width = 140f;
@@ -448,6 +639,20 @@ namespace ReduxMissionLog
             archiveButton.style.flexGrow = 0f;
             archiveButton.style.width = 124f;
             navigation.Add(archiveButton);
+            Button currentButton = CreateButton(
+                "Current",
+                "Follow the mission for the active vessel",
+                ShowCurrentStory);
+            currentButton.style.flexGrow = 0f;
+            currentButton.style.width = 92f;
+            navigation.Add(currentButton);
+            Button plannerButton = CreateButton(
+                "Plan mission",
+                "Open the mission planner",
+                OpenPlanner);
+            plannerButton.style.flexGrow = 0f;
+            plannerButton.style.width = 116f;
+            navigation.Add(plannerButton);
             VisualElement spacer = new VisualElement();
             spacer.style.flexGrow = 1f;
             navigation.Add(spacer);
@@ -462,41 +667,58 @@ namespace ReduxMissionLog
             _storyView.Add(navigation);
 
             InvertedCornerBox header = CreatePanel("mission-story-header");
-            header.style.marginTop = 7f;
-            header.style.marginBottom = 7f;
+            header.style.marginTop = 5f;
+            header.style.marginBottom = 5f;
+            header.style.paddingTop = 6f;
+            header.style.paddingBottom = 6f;
             header.style.flexShrink = 0f;
-            _missionTitle = CreateHeading(string.Empty, 21f);
-            _missionTitle.style.marginBottom = 5f;
-            header.Add(_missionTitle);
+            VisualElement titleRow = CreateActionRow();
+            titleRow.style.alignItems = Align.Center;
+            _missionTitle = CreateHeading(string.Empty, 19f);
+            _missionTitle.style.flexGrow = 1f;
+            _missionTitle.style.flexShrink = 1f;
+            _missionTitle.style.minWidth = 0f;
+            _missionTitle.style.whiteSpace = WhiteSpace.NoWrap;
+            _missionTitle.style.overflow = Overflow.Hidden;
+            _missionTitle.style.textOverflow = TextOverflow.Ellipsis;
+            titleRow.Add(_missionTitle);
 
-            VisualElement chips = CreateActionRow();
             _statusChip = CreateChip();
             _kindChip = CreateChip();
-            chips.Add(_statusChip);
-            chips.Add(_kindChip);
-            VisualElement chipSpacer = new VisualElement();
-            chipSpacer.style.flexGrow = 1f;
-            chips.Add(chipSpacer);
-            header.Add(chips);
+            titleRow.Add(_statusChip);
+            titleRow.Add(_kindChip);
+            header.Add(titleRow);
 
-            _missionMeta = CreateWrappedLabel(string.Empty);
-            _missionMeta.style.marginTop = 6f;
+            _missionMeta = CreateMutedLabel(string.Empty);
+            _missionMeta.style.marginTop = 3f;
+            _missionMeta.style.flexShrink = 1f;
+            _missionMeta.style.whiteSpace = WhiteSpace.NoWrap;
+            _missionMeta.style.overflow = Overflow.Hidden;
+            _missionMeta.style.textOverflow = TextOverflow.Ellipsis;
             header.Add(_missionMeta);
             _relationshipRow = new VisualElement { name = "mission-relationships" };
             _relationshipRow.style.flexDirection = FlexDirection.Row;
             _relationshipRow.style.flexWrap = Wrap.Wrap;
-            _relationshipRow.style.marginTop = 4f;
+            _relationshipRow.style.marginTop = 2f;
             header.Add(_relationshipRow);
             _storyView.Add(header);
 
             _reviewBanner = CreatePanel("mission-review-banner");
             _reviewBanner.BorderColor = new Color32(221, 178, 80, 255);
-            _reviewBanner.style.marginBottom = 7f;
+            _reviewBanner.style.marginBottom = 5f;
+            _reviewBanner.style.paddingTop = 5f;
+            _reviewBanner.style.paddingBottom = 5f;
             VisualElement reviewRow = CreateActionRow();
-            Label reviewText = CreateWrappedLabel("This mission relationship needs review.");
-            reviewText.style.flexGrow = 1f;
-            reviewText.style.unityFontStyleAndWeight = FontStyle.Bold;
-            reviewRow.Add(reviewText);
+            reviewRow.style.alignItems = Align.Center;
+            _reviewText = CreateWrappedLabel(string.Empty);
+            _reviewText.style.flexGrow = 1f;
+            _reviewText.style.flexShrink = 1f;
+            _reviewText.style.minWidth = 0f;
+            _reviewText.style.whiteSpace = WhiteSpace.NoWrap;
+            _reviewText.style.overflow = Overflow.Hidden;
+            _reviewText.style.textOverflow = TextOverflow.Ellipsis;
+            _reviewText.style.unityFontStyleAndWeight = FontStyle.Bold;
+            reviewRow.Add(_reviewText);
             Button reviewButton = CreateButton("Review", "Open the mission organizer", ShowManage);
             reviewButton.style.flexGrow = 0f;
             reviewButton.style.width = 92f;
@@ -505,14 +727,57 @@ namespace ReduxMissionLog
             _storyView.Add(_reviewBanner);
 
             _noteCard = CreatePanel("mission-note-card");
-            _noteCard.style.marginBottom = 7f;
-            Label noteHeading = CreateMutedLabel("MISSION NOTE");
+            _noteCard.style.marginBottom = 5f;
+            _noteCard.style.paddingTop = 5f;
+            _noteCard.style.paddingBottom = 5f;
+            _noteCard.style.flexDirection = FlexDirection.Row;
+            _noteCard.style.alignItems = Align.Center;
+            Label noteHeading = CreateMutedLabel("NOTE");
             noteHeading.style.unityFontStyleAndWeight = FontStyle.Bold;
-            _noteText = CreateWrappedLabel(string.Empty);
-            _noteText.style.marginTop = 3f;
+            noteHeading.style.width = 48f;
+            noteHeading.style.minWidth = 48f;
+            _noteText = new Label();
+            _noteText.style.flexGrow = 1f;
+            _noteText.style.flexShrink = 1f;
+            _noteText.style.minWidth = 0f;
+            _noteText.style.whiteSpace = WhiteSpace.NoWrap;
+            _noteText.style.overflow = Overflow.Hidden;
+            _noteText.style.textOverflow = TextOverflow.Ellipsis;
             _noteCard.Add(noteHeading);
             _noteCard.Add(_noteText);
             _storyView.Add(_noteCard);
+
+            _planBanner = CreatePanel("mission-plan-context");
+            _planBanner.BorderColor = new Color32(188, 161, 255, 255);
+            _planBanner.style.marginBottom = 5f;
+            _planBanner.style.paddingTop = 5f;
+            _planBanner.style.paddingBottom = 5f;
+            VisualElement planRow = CreateActionRow();
+            planRow.style.alignItems = Align.Center;
+            _planText = CreateWrappedLabel(string.Empty);
+            _planText.style.flexGrow = 1f;
+            _planText.style.flexShrink = 1f;
+            _planText.style.minWidth = 0f;
+            _planText.style.whiteSpace = WhiteSpace.NoWrap;
+            _planText.style.overflow = Overflow.Hidden;
+            _planText.style.textOverflow = TextOverflow.Ellipsis;
+            _planText.style.unityFontStyleAndWeight = FontStyle.Bold;
+            planRow.Add(_planText);
+            Button openPlan = CreateButton(
+                "View plan",
+                "Open this mission's plan and progress",
+                delegate
+                {
+                    if (!string.IsNullOrWhiteSpace(_linkedPlanId))
+                    {
+                        OpenPlanner(_linkedPlanId);
+                    }
+                });
+            openPlan.style.flexGrow = 0f;
+            openPlan.style.width = 100f;
+            planRow.Add(openPlan);
+            _planBanner.Add(planRow);
+            _storyView.Add(_planBanner);
 
             BuildEditorSheet();
             BuildManageSheet();
@@ -587,7 +852,19 @@ namespace ReduxMissionLog
             notesLabel.style.marginTop = 5f;
             _editorSheet.Add(notesLabel);
             _notesField = new TextField { name = "mission-notes", multiline = true };
-            _notesField.style.height = 72f;
+            _notesField.AddToClassList("oab-text-field");
+            _notesField.style.width = Length.Percent(100f);
+            _notesField.style.maxWidth = Length.Percent(100f);
+            _notesField.style.minWidth = 0f;
+            _notesField.style.height = 82f;
+            _notesField.style.whiteSpace = WhiteSpace.Normal;
+            _notesField.style.overflow = Overflow.Hidden;
+            VisualElement notesInput = _notesField.Q<VisualElement>("unity-text-input");
+            if (notesInput != null)
+            {
+                notesInput.style.whiteSpace = WhiteSpace.Normal;
+                notesInput.style.overflow = Overflow.Hidden;
+            }
             _editorSheet.Add(_notesField);
 
             VisualElement actions = CreateActionRow();
@@ -624,14 +901,36 @@ namespace ReduxMissionLog
 
         private void Refresh()
         {
+            if (!_showPlanner && !_showArchive && _followCurrentMission)
+            {
+                MissionRecord current = _tracker.GetCurrent();
+                if (current != null && !string.Equals(
+                    current.MissionId,
+                    _selectedMissionId,
+                    StringComparison.Ordinal))
+                {
+                    Select(current);
+                }
+            }
             MissionRecord selected = FindSelected();
-            if (selected == null)
+            if (selected == null && !_showPlanner)
             {
                 _showArchive = true;
             }
-            _archiveView.style.display = _showArchive ? DisplayStyle.Flex : DisplayStyle.None;
-            _storyView.style.display = _showArchive ? DisplayStyle.None : DisplayStyle.Flex;
-            if (_showArchive)
+            _archiveView.style.display = !_showPlanner && _showArchive
+                ? DisplayStyle.Flex
+                : DisplayStyle.None;
+            _storyView.style.display = !_showPlanner && !_showArchive
+                ? DisplayStyle.Flex
+                : DisplayStyle.None;
+            _plannerView.style.display = _showPlanner
+                ? DisplayStyle.Flex
+                : DisplayStyle.None;
+            if (_showPlanner)
+            {
+                _plannerPanel.Refresh();
+            }
+            else if (_showArchive)
             {
                 PopulateArchive();
             }
@@ -643,6 +942,15 @@ namespace ReduxMissionLog
 
         private void PopulateArchive()
         {
+            string fingerprint = BuildArchiveFingerprint();
+            if (string.Equals(
+                fingerprint,
+                _archiveFingerprint,
+                StringComparison.Ordinal))
+            {
+                return;
+            }
+            _archiveFingerprint = fingerprint;
             _archiveTree.Clear();
             int count = _tracker.Archive.Missions.Count;
             _archiveCount.text = count + (count == 1 ? " mission record" : " mission records");
@@ -667,6 +975,30 @@ namespace ReduxMissionLog
             {
                 AddArchiveNode(roots[index], 0, visited);
             }
+        }
+
+        private string BuildArchiveFingerprint()
+        {
+            var value = new StringBuilder();
+            value.Append(_selectedMissionId).Append('|');
+            for (int index = 0; index < _tracker.Archive.Missions.Count; index++)
+            {
+                MissionRecord mission = _tracker.Archive.Missions[index];
+                if (mission == null)
+                {
+                    continue;
+                }
+                value.Append(mission.MissionId).Append(':')
+                    .Append(mission.ParentMissionId).Append(':')
+                    .Append(mission.Title).Append(':')
+                    .Append(mission.Status).Append(':')
+                    .Append(mission.MissionKind).Append(':')
+                    .Append(mission.LastBody).Append(':')
+                    .Append(mission.IsActive).Append(':')
+                    .Append(_collapsedMissionIds.Contains(mission.MissionId))
+                    .Append('|');
+            }
+            return value.ToString();
         }
 
         private void AddArchiveNode(MissionRecord mission, int depth, HashSet<string> visited)
@@ -756,19 +1088,27 @@ namespace ReduxMissionLog
             MissionRecord parent = _tracker.GetParent(mission);
 
             _missionTitle.text = mission.Title;
+            _missionTitle.tooltip = mission.Title;
             _statusChip.text = mission.Status.ToUpperInvariant();
             _kindChip.text = mission.MissionKind.ToUpperInvariant();
             ApplyChipColor(_statusChip, StatusColor(mission.Status));
             ApplyChipColor(_kindChip, new Color32(119, 152, 204, 255));
-            _missionMeta.text = BuildMissionMeta(mission, aggregate);
+            string missionMeta = BuildMissionMeta(mission, aggregate);
+            _missionMeta.text = missionMeta;
+            _missionMeta.tooltip = missionMeta;
             PopulateRelationships(mission, parent, children);
 
             _reviewBanner.style.display = mission.NeedsReview
                 ? DisplayStyle.Flex
                 : DisplayStyle.None;
+            string reviewReason = BuildReviewReason(mission);
+            _reviewText.text = reviewReason;
+            _reviewText.tooltip = reviewReason;
             bool hasNote = !string.IsNullOrWhiteSpace(mission.Notes);
             _noteCard.style.display = hasNote ? DisplayStyle.Flex : DisplayStyle.None;
-            _noteText.text = hasNote ? mission.Notes : string.Empty;
+            _noteText.text = hasNote ? CompactSingleLine(mission.Notes) : string.Empty;
+            _noteText.tooltip = hasNote ? mission.Notes : string.Empty;
+            PopulatePlanContext(mission);
 
             _editorSheet.style.display = _showEditor ? DisplayStyle.Flex : DisplayStyle.None;
             _manageSheet.style.display = _showManage ? DisplayStyle.Flex : DisplayStyle.None;
@@ -781,6 +1121,222 @@ namespace ReduxMissionLog
                 PopulateManage(mission, parent);
             }
             PopulateTimeline(mission);
+        }
+
+        private void PopulatePlanContext(MissionRecord mission)
+        {
+            MissionPlan plan = FindLinkedPlan(mission);
+            _linkedPlanId = plan == null ? null : plan.PlanId;
+            _planBanner.style.display = plan == null
+                ? DisplayStyle.None
+                : DisplayStyle.Flex;
+            if (plan == null)
+            {
+                _planText.text = string.Empty;
+                _planText.tooltip = string.Empty;
+                return;
+            }
+
+            int total = 0;
+            int resolved = 0;
+            MissionPlanObjective next = null;
+            for (int index = 0; index < plan.Objectives.Count; index++)
+            {
+                MissionPlanObjective objective = plan.Objectives[index];
+                if (objective == null || objective.Archived)
+                {
+                    continue;
+                }
+                total++;
+                if (objective.Status == MissionObjectiveStatus.Achieved ||
+                    objective.Status == MissionObjectiveStatus.Skipped ||
+                    objective.Status == MissionObjectiveStatus.Deviated)
+                {
+                    resolved++;
+                }
+                else if (next == null)
+                {
+                    next = objective;
+                }
+            }
+
+            int deviations = plan.Deviations == null ? 0 : plan.Deviations.Count;
+            string nextText = plan.Status == MissionPlanStatus.Completed
+                ? "PLAN COMPLETE"
+                : (next == null ? "PLAN RESOLVED" : "NEXT  " + next.Title);
+            string text = "PLAN  ·  " + plan.Title + "  ·  " + resolved + "/" +
+                total + " resolved  ·  " + nextText;
+            if (deviations > 0)
+            {
+                text += "  ·  " + deviations +
+                    (deviations == 1 ? " deviation" : " deviations");
+            }
+            _planText.text = text;
+            _planText.tooltip = text;
+        }
+
+        private MissionPlan FindLinkedPlan(MissionRecord mission)
+        {
+            if (mission == null || _planner == null || _planner.State == null ||
+                _planner.State.Plans == null)
+            {
+                return null;
+            }
+
+            MissionPlan best = null;
+            for (int index = 0; index < _planner.State.Plans.Count; index++)
+            {
+                MissionPlan plan = _planner.State.Plans[index];
+                if (plan == null || plan.Archived ||
+                    plan.Status == MissionPlanStatus.Abandoned ||
+                    !PlanReferencesMission(plan, mission))
+                {
+                    continue;
+                }
+                if (best == null ||
+                    (plan.Status == MissionPlanStatus.Active &&
+                     best.Status != MissionPlanStatus.Active) ||
+                    (plan.Status == best.Status && string.CompareOrdinal(
+                        plan.UpdatedUtc,
+                        best.UpdatedUtc) > 0))
+                {
+                    best = plan;
+                }
+            }
+            return best;
+        }
+
+        private bool PlanReferencesMission(MissionPlan plan, MissionRecord mission)
+        {
+            if (!string.IsNullOrWhiteSpace(plan.CampaignId) &&
+                !string.Equals(
+                    plan.CampaignId,
+                    mission.CampaignId,
+                    StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            string missionRootId = RootMissionId(mission.MissionId);
+            for (int index = 0; index < plan.VesselSlots.Count; index++)
+            {
+                MissionPlanVesselSlot slot = plan.VesselSlots[index];
+                if (slot == null || slot.Archived)
+                {
+                    continue;
+                }
+                if (MissionAliasMatches(
+                    mission.MissionId,
+                    missionRootId,
+                    slot.BoundMissionId))
+                {
+                    return true;
+                }
+                for (int aliasIndex = 0;
+                    aliasIndex < slot.MissionIds.Count;
+                    aliasIndex++)
+                {
+                    if (MissionAliasMatches(
+                        mission.MissionId,
+                        missionRootId,
+                        slot.MissionIds[aliasIndex]))
+                    {
+                        return true;
+                    }
+                }
+                if (VesselAliasMatches(slot.BoundVesselId, mission) ||
+                    AnyVesselAliasMatches(slot.VesselIds, mission))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private bool MissionAliasMatches(
+            string missionId,
+            string missionRootId,
+            string aliasMissionId)
+        {
+            if (string.IsNullOrWhiteSpace(aliasMissionId))
+            {
+                return false;
+            }
+            if (string.Equals(missionId, aliasMissionId, StringComparison.Ordinal))
+            {
+                return true;
+            }
+            string aliasRootId = RootMissionId(aliasMissionId);
+            return !string.IsNullOrWhiteSpace(missionRootId) &&
+                string.Equals(missionRootId, aliasRootId, StringComparison.Ordinal);
+        }
+
+        private string RootMissionId(string missionId)
+        {
+            MissionRecord cursor = _tracker.FindById(missionId);
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            while (cursor != null && seen.Add(cursor.MissionId))
+            {
+                if (string.IsNullOrWhiteSpace(cursor.ParentMissionId))
+                {
+                    return cursor.MissionId;
+                }
+                MissionRecord parent = _tracker.FindById(cursor.ParentMissionId);
+                if (parent == null)
+                {
+                    return cursor.MissionId;
+                }
+                cursor = parent;
+            }
+            return cursor == null ? missionId : cursor.MissionId;
+        }
+
+        private static bool AnyVesselAliasMatches(
+            List<string> aliases,
+            MissionRecord mission)
+        {
+            if (aliases == null)
+            {
+                return false;
+            }
+            for (int index = 0; index < aliases.Count; index++)
+            {
+                if (VesselAliasMatches(aliases[index], mission))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private static bool VesselAliasMatches(string vesselId, MissionRecord mission)
+        {
+            if (string.IsNullOrWhiteSpace(vesselId) || mission == null)
+            {
+                return false;
+            }
+            if (string.Equals(vesselId, mission.VesselId, StringComparison.Ordinal))
+            {
+                return true;
+            }
+            return ContainsOrdinal(mission.VesselIds, vesselId) ||
+                ContainsOrdinal(mission.TrackedVesselIds, vesselId);
+        }
+
+        private static bool ContainsOrdinal(List<string> values, string expected)
+        {
+            if (values == null)
+            {
+                return false;
+            }
+            for (int index = 0; index < values.Count; index++)
+            {
+                if (string.Equals(values[index], expected, StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+            return false;
         }
 
         private void PopulateRelationships(
@@ -827,6 +1383,7 @@ namespace ReduxMissionLog
             }
             _timelineFingerprint = fingerprint;
             _timeline.Clear();
+            _timelineExpansionStates.Clear();
 
             if (items.Count == 0)
             {
@@ -838,55 +1395,80 @@ namespace ReduxMissionLog
             }
 
             bool showSourceClocks = HasMultipleTimelineSources(items);
+            var renderedIds = new HashSet<string>(StringComparer.Ordinal);
             for (int index = 0; index < items.Count; index++)
             {
-                _timeline.Add(CreateTimelineRow(items[index], mission, showSourceClocks));
+                string eventId = items[index].Event.EventId ?? string.Empty;
+                renderedIds.Add(eventId);
+                _timeline.Add(CreateTimelineRow(
+                    items[index], mission, showSourceClocks, index + 1));
             }
+            _expandedTimelineEventIds.RemoveWhere(
+                eventId => !renderedIds.Contains(eventId));
         }
 
         private VisualElement CreateTimelineRow(
             MissionTimelineItem item,
             MissionRecord selected,
-            bool showSourceClock)
+            bool showSourceClock,
+            int position)
         {
             Color32 accent = CategoryColor(item.Category, item.SourceMission.Status);
-            VisualElement row = new VisualElement();
+            string eventId = item.Event.EventId ?? string.Empty;
+            VisualElement row = new VisualElement
+            {
+                name = "timeline-row-" + eventId,
+                focusable = true,
+                tabIndex = 0,
+                tooltip = "Hover or focus to show mission-leg details"
+            };
             row.style.flexDirection = FlexDirection.Row;
             row.style.flexShrink = 0f;
-            row.style.marginBottom = 7f;
+            row.style.marginBottom = 4f;
 
-            VisualElement marker = new VisualElement();
-            float markerWidth = showSourceClock ? 112f : 86f;
-            marker.style.width = markerWidth;
-            marker.style.minWidth = markerWidth;
-            marker.style.alignItems = Align.Center;
-            marker.style.paddingTop = 4f;
+            Label order = CreateMutedLabel(position.ToString("00"));
+            order.tooltip = "Chronological moment " + position;
+            order.style.width = 28f;
+            order.style.minWidth = 28f;
+            order.style.unityTextAlign = TextAnchor.MiddleCenter;
+            order.style.fontSize = 10f;
+            row.Add(order);
 
-            if (showSourceClock)
-            {
-                Label sourceClock = CreateMutedLabel(
-                    (item.SourceMission.Title ?? "Mission leg").ToUpperInvariant());
-                sourceClock.tooltip = "Flight clock for " + item.SourceMission.Title;
-                sourceClock.style.width = markerWidth - 8f;
-                sourceClock.style.fontSize = 9f;
-                sourceClock.style.whiteSpace = WhiteSpace.NoWrap;
-                sourceClock.style.overflow = Overflow.Hidden;
-                sourceClock.style.textOverflow = TextOverflow.Ellipsis;
-                sourceClock.style.unityTextAlign = TextAnchor.MiddleCenter;
-                marker.Add(sourceClock);
-            }
+            InvertedCornerBox card = CreatePanel("timeline-" + eventId);
+            card.BorderColor = accent;
+            card.style.flexGrow = 1f;
+            card.style.minWidth = 0f;
+            card.style.paddingLeft = 7f;
+            card.style.paddingRight = 7f;
+            card.style.paddingTop = 4f;
+            card.style.paddingBottom = 4f;
 
-            Label time = CreateMutedLabel(item.IsDerived
-                ? "ARCHIVE SUMMARY"
-                : "T+" + FormatDuration(item.Event.FlightTimeSeconds));
-            time.style.unityTextAlign = TextAnchor.MiddleCenter;
-            time.style.fontSize = item.IsDerived ? 9f : 11f;
-            marker.Add(time);
+            VisualElement summary = CreateActionRow();
+            summary.style.height = 30f;
+            summary.style.alignItems = Align.Center;
+
+            string clockText = item.IsDerived
+                ? "SUMMARY"
+                : (showSourceClock ? "LEG T+" : "T+") +
+                    FormatDuration(item.Event.FlightTimeSeconds);
+            Label time = CreateMutedLabel(clockText);
+            time.tooltip = item.IsDerived
+                ? "Summary calculated from the archived mission"
+                : (showSourceClock
+                    ? "Flight clock for mission leg " + item.SourceMission.Title
+                    : "Mission flight clock");
+            time.style.width = showSourceClock ? 84f : 72f;
+            time.style.minWidth = showSourceClock ? 84f : 72f;
+            time.style.whiteSpace = WhiteSpace.NoWrap;
+            time.style.unityTextAlign = TextAnchor.MiddleLeft;
+            time.style.fontSize = item.IsDerived ? 9f : 10f;
+            summary.Add(time);
 
             Label symbol = new Label(item.Symbol);
-            symbol.style.width = 30f;
-            symbol.style.height = 30f;
-            symbol.style.marginTop = 4f;
+            symbol.style.width = 24f;
+            symbol.style.minWidth = 24f;
+            symbol.style.height = 24f;
+            symbol.style.marginRight = 7f;
             symbol.style.borderLeftWidth = 1f;
             symbol.style.borderRightWidth = 1f;
             symbol.style.borderTopWidth = 1f;
@@ -901,49 +1483,139 @@ namespace ReduxMissionLog
             symbol.style.borderBottomRightRadius = 5f;
             symbol.style.color = new StyleColor(accent);
             symbol.style.unityTextAlign = TextAnchor.MiddleCenter;
-            symbol.style.fontSize = 17f;
-            marker.Add(symbol);
-            row.Add(marker);
+            symbol.style.fontSize = 14f;
+            summary.Add(symbol);
 
-            InvertedCornerBox card = CreatePanel("timeline-" + item.Event.EventId);
-            card.BorderColor = accent;
-            card.style.flexGrow = 1f;
-            card.style.minWidth = 0f;
-            card.style.minHeight = 72f;
-
-            VisualElement cardHeader = CreateActionRow();
             Label category = CreateMutedLabel(item.CategoryLabel);
             category.style.color = new StyleColor(accent);
             category.style.unityFontStyleAndWeight = FontStyle.Bold;
-            category.style.flexGrow = 1f;
-            cardHeader.Add(category);
+            category.style.width = 92f;
+            category.style.minWidth = 92f;
+            category.style.marginRight = 7f;
+            category.style.fontSize = 10f;
+            category.style.whiteSpace = WhiteSpace.NoWrap;
+            summary.Add(category);
+
+            Label title = new Label(item.Event.Title);
+            title.tooltip = item.Event.Title;
+            title.style.flexGrow = 1f;
+            title.style.flexShrink = 1f;
+            title.style.minWidth = 0f;
+            title.style.whiteSpace = WhiteSpace.NoWrap;
+            title.style.overflow = Overflow.Hidden;
+            title.style.textOverflow = TextOverflow.Ellipsis;
+            title.style.unityFontStyleAndWeight = FontStyle.Bold;
+            title.style.fontSize = 13f;
+            summary.Add(title);
+
+            Label chevron = CreateMutedLabel("▾");
+            chevron.tooltip = "Show details";
+            chevron.style.width = 18f;
+            chevron.style.minWidth = 18f;
+            chevron.style.unityTextAlign = TextAnchor.MiddleCenter;
+            summary.Add(chevron);
+            card.Add(summary);
+
+            VisualElement details = new VisualElement
+            {
+                name = "timeline-details-" + eventId
+            };
+            details.style.marginLeft = showSourceClock ? 115f : 103f;
+            details.style.marginTop = 2f;
+            details.style.paddingTop = 4f;
+            details.style.borderTopWidth = 1f;
+            details.style.borderTopColor =
+                new StyleColor(new Color32(80, 84, 96, 180));
+
+            VisualElement sourceRow = new VisualElement();
+            sourceRow.style.flexDirection = FlexDirection.Row;
+            sourceRow.style.alignItems = Align.Center;
+            Label sourcePrefix = CreateMutedLabel("MISSION LEG  ·  ");
+            sourcePrefix.style.whiteSpace = WhiteSpace.NoWrap;
+            sourceRow.Add(sourcePrefix);
             if (!ReferenceEquals(item.SourceMission, selected))
             {
                 Button source = CreateLinkButton(
                     item.SourceMission.Title,
                     delegate { OpenMission(item.SourceMission); });
                 source.tooltip = "Open this mission leg";
-                source.style.maxWidth = 280f;
-                source.style.unityTextAlign = TextAnchor.MiddleRight;
-                cardHeader.Add(source);
+                source.style.flexGrow = 1f;
+                source.style.flexShrink = 1f;
+                source.style.minWidth = 0f;
+                source.style.unityTextAlign = TextAnchor.MiddleLeft;
+                sourceRow.Add(source);
             }
-            card.Add(cardHeader);
-
-            Label title = CreateWrappedLabel(item.Event.Title);
-            title.style.unityFontStyleAndWeight = FontStyle.Bold;
-            title.style.fontSize = 15f;
-            title.style.marginTop = 3f;
-            card.Add(title);
+            else
+            {
+                Label sourceName = CreateWrappedLabel(item.SourceMission.Title);
+                sourceName.style.flexGrow = 1f;
+                sourceName.style.flexShrink = 1f;
+                sourceName.style.minWidth = 0f;
+                sourceName.style.unityFontStyleAndWeight = FontStyle.Bold;
+                sourceRow.Add(sourceName);
+            }
+            details.Add(sourceRow);
 
             string context = BuildEventContext(item);
+            var detailValues = new List<string>();
+            detailValues.Add(item.IsDerived
+                ? "Calculated archive summary"
+                : (showSourceClock ? "Leg clock " : "Flight clock ") +
+                    "T+" + FormatDuration(item.Event.FlightTimeSeconds));
             if (!string.IsNullOrWhiteSpace(context))
             {
-                Label metadata = CreateMutedLabel(context);
-                metadata.style.marginTop = 3f;
-                card.Add(metadata);
+                detailValues.Add(context);
             }
+            if (item.Event.VesselIds != null && item.Event.VesselIds.Count > 1)
+            {
+                detailValues.Add(item.Event.VesselIds.Count + " vessels");
+            }
+            Label metadata = CreateMutedLabel(
+                string.Join("  ·  ", detailValues.ToArray()));
+            metadata.style.marginTop = 2f;
+            details.Add(metadata);
+            card.Add(details);
             row.Add(card);
+
+            var state = new TimelineExpansionState
+            {
+                Row = row,
+                Details = details,
+                Chevron = chevron
+            };
+            _timelineExpansionStates[eventId] = state;
+            row.RegisterCallback<PointerEnterEvent>(delegate(PointerEnterEvent unused)
+            {
+                state.Hovered = true;
+                ApplyTimelineExpansion(eventId, state);
+            });
+            row.RegisterCallback<PointerLeaveEvent>(delegate(PointerLeaveEvent unused)
+            {
+                state.Hovered = false;
+                ApplyTimelineExpansion(eventId, state);
+            });
+            row.RegisterCallback<FocusInEvent>(delegate(FocusInEvent unused)
+            {
+                state.Focused = true;
+                ApplyTimelineExpansion(eventId, state);
+            });
+            row.RegisterCallback<FocusOutEvent>(delegate(FocusOutEvent unused)
+            {
+                state.Focused = false;
+                ApplyTimelineExpansion(eventId, state);
+            });
+            ApplyTimelineExpansion(eventId, state);
             return row;
+        }
+
+        private void ApplyTimelineExpansion(string eventId, TimelineExpansionState state)
+        {
+            bool expanded = _expandedTimelineEventIds.Contains(eventId) ||
+                state.Hovered || state.Focused;
+            state.Details.style.display = expanded ? DisplayStyle.Flex : DisplayStyle.None;
+            state.Chevron.text = expanded ? "▴" : "▾";
+            state.Chevron.tooltip = expanded ? "Hide details" : "Show details";
+            state.Row.style.marginBottom = expanded ? 7f : 4f;
         }
 
         private static bool HasMultipleTimelineSources(List<MissionTimelineItem> items)
@@ -966,6 +1638,15 @@ namespace ReduxMissionLog
 
         private void PopulateManage(MissionRecord selected, MissionRecord parent)
         {
+            string fingerprint = BuildManageFingerprint(selected, parent);
+            if (string.Equals(
+                fingerprint,
+                _manageFingerprint,
+                StringComparison.Ordinal))
+            {
+                return;
+            }
+            _manageFingerprint = fingerprint;
             _manageBody.Clear();
             bool hasFeedback = !string.IsNullOrWhiteSpace(_feedback);
             _manageFeedback.text = hasFeedback ? _feedback : string.Empty;
@@ -1031,9 +1712,48 @@ namespace ReduxMissionLog
             _manageBody.Add(done);
         }
 
+        private string BuildManageFingerprint(
+            MissionRecord selected,
+            MissionRecord parent)
+        {
+            MissionRecord current = _tracker.GetCurrent();
+            var value = new StringBuilder();
+            AppendManageMission(value, selected);
+            AppendManageMission(value, parent);
+            AppendManageMission(value, current);
+            value.Append(_tracker.ActiveVesselId).Append('|')
+                .Append(_pendingAction).Append('|')
+                .Append(_pendingSelectedMissionId).Append('|')
+                .Append(_pendingCurrentMissionId).Append('|')
+                .Append(_pendingVesselId).Append('|')
+                .Append(_pendingPrompt).Append('|')
+                .Append(_feedback);
+            return value.ToString();
+        }
+
+        private static void AppendManageMission(
+            StringBuilder value,
+            MissionRecord mission)
+        {
+            if (mission == null)
+            {
+                value.Append("<none>|");
+                return;
+            }
+            value.Append(mission.MissionId).Append(':')
+                .Append(mission.ParentMissionId).Append(':')
+                .Append(mission.Status).Append(':')
+                .Append(mission.CampaignId).Append(':')
+                .Append(mission.VesselId).Append(':')
+                .Append(mission.TrackedVesselIds.Count).Append(':')
+                .Append(mission.NeedsReview).Append('|');
+        }
+
         private void ShowArchive()
         {
+            _showPlanner = false;
             _showArchive = true;
+            _plannerPanel.Hide();
             _showEditor = false;
             _showManage = false;
             Refresh();
@@ -1041,10 +1761,19 @@ namespace ReduxMissionLog
 
         private void ShowStory()
         {
+            _showPlanner = false;
             _showArchive = false;
+            _plannerPanel.Hide();
             _showEditor = false;
             _showManage = false;
             Refresh();
+        }
+
+        private void ShowCurrentStory()
+        {
+            _followCurrentMission = true;
+            Select(_tracker.GetCurrent() ?? _tracker.GetLatest());
+            ShowStory();
         }
 
         private void ShowEditor()
@@ -1068,6 +1797,7 @@ namespace ReduxMissionLog
             _showEditor = false;
             _feedback = null;
             ClearPending();
+            _manageFingerprint = null;
             Refresh();
         }
 
@@ -1263,7 +1993,12 @@ namespace ReduxMissionLog
         private void Select(MissionRecord mission)
         {
             _selectedMissionId = mission == null ? null : mission.MissionId;
+            _showEditor = false;
+            _showManage = false;
+            _manageFingerprint = null;
             _timelineFingerprint = null;
+            _expandedTimelineEventIds.Clear();
+            _timelineExpansionStates.Clear();
             RenderedTimelineCount = 0;
             ClearPending();
             _feedback = null;
@@ -1292,7 +2027,11 @@ namespace ReduxMissionLog
         private static string BuildMissionMeta(MissionRecord mission, MissionAggregate aggregate)
         {
             var values = new List<string>();
-            if (!string.IsNullOrWhiteSpace(mission.VesselName))
+            if (!string.IsNullOrWhiteSpace(mission.VesselName) &&
+                !string.Equals(
+                    mission.VesselName.Trim(),
+                    (mission.Title ?? string.Empty).Trim(),
+                    StringComparison.OrdinalIgnoreCase))
             {
                 values.Add(mission.VesselName);
             }
@@ -1305,6 +2044,45 @@ namespace ReduxMissionLog
             }
             values.Add(FormatDuration(mission.FlightDurationSeconds));
             return string.Join("   ·   ", values.ToArray());
+        }
+
+        private static string BuildReviewReason(MissionRecord mission)
+        {
+            MissionEvent latest = null;
+            for (int index = 0; index < mission.Events.Count; index++)
+            {
+                MissionEvent candidate = mission.Events[index];
+                if (candidate == null || !string.Equals(
+                    candidate.Kind, "lineage_needs_review", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+                if (latest == null || string.Compare(
+                    candidate.RecordedUtc ?? string.Empty,
+                    latest.RecordedUtc ?? string.Empty,
+                    StringComparison.Ordinal) > 0)
+                {
+                    latest = candidate;
+                }
+            }
+            string reason = latest == null || string.IsNullOrWhiteSpace(latest.Title)
+                ? "Mission relationship needs review"
+                : latest.Title.Trim();
+            return "REVIEW  ·  " + reason;
+        }
+
+        private static string CompactSingleLine(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return string.Empty;
+            }
+            string compact = text.Replace('\r', ' ').Replace('\n', ' ');
+            while (compact.IndexOf("  ", StringComparison.Ordinal) >= 0)
+            {
+                compact = compact.Replace("  ", " ");
+            }
+            return compact.Trim();
         }
 
         private static string BuildEventContext(MissionTimelineItem item)

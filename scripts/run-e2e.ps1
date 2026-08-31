@@ -32,20 +32,16 @@ $fixture = Join-Path $Fixtures 'local\launchpad-fly-safe-15.json'
 if (-not (Test-Path -LiteralPath $runner)) {
     throw "ReduxTestHarness runner was not found: $runner"
 }
-if (-not (Test-Path -LiteralPath $fixture)) {
-    throw "The required local launchpad fixture was not found: $fixture"
-}
-
 if (-not $SkipInstall) {
     & (Join-Path $PSScriptRoot 'install.ps1') -GameRoot $GameRoot
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 
-$suites = @(
+$semanticSuites = @(
     'mission-tree-sequences.lua',
-    'mission-lifecycle.lua'
+    'mission-planner.lua'
 )
-foreach ($suite in $suites) {
+foreach ($suite in $semanticSuites) {
     $suiteName = [IO.Path]::GetFileNameWithoutExtension($suite)
     $arguments = @(
         '-NoProfile',
@@ -53,7 +49,6 @@ foreach ($suite in $suites) {
         'run', (Join-Path $repoRoot "tests\e2e\$suite"),
         '-Launch',
         '-Timeout', $Timeout,
-        '-Fixtures', $Fixtures,
         '-Results', (Join-Path $repoRoot ".test-results\e2e\$suiteName")
     )
     if ($GameRoot) { $arguments += @('-GameRoot', $GameRoot) }
@@ -62,4 +57,23 @@ foreach ($suite in $suites) {
     & (Get-Command pwsh -ErrorAction Stop).Source @arguments
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
+
+if (-not (Test-Path -LiteralPath $fixture)) {
+    throw "The required local launchpad fixture was not found after fixture-free suites passed: $fixture"
+}
+
+$arguments = @(
+    '-NoProfile',
+    '-File', $runner,
+    'run', (Join-Path $repoRoot 'tests\e2e\mission-lifecycle.lua'),
+    '-Launch',
+    '-Timeout', $Timeout,
+    '-Fixtures', $Fixtures,
+    '-Results', (Join-Path $repoRoot '.test-results\e2e\mission-lifecycle')
+)
+if ($GameRoot) { $arguments += @('-GameRoot', $GameRoot) }
+if ($KeepOpen) { $arguments += '-KeepOpen' }
+
+& (Get-Command pwsh -ErrorAction Stop).Source @arguments
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 exit 0

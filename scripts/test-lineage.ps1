@@ -37,6 +37,7 @@ if (-not (Test-Path -LiteralPath $mono)) {
 $sources = @(
     (Join-Path $repoRoot 'src\ReduxMissionLog\MissionModels.cs'),
     (Join-Path $repoRoot 'src\ReduxMissionLog\MissionLineageResolver.cs'),
+    (Join-Path $repoRoot 'src\ReduxMissionLog\MissionTimeline.cs'),
     (Join-Path $repoRoot 'src\ReduxMissionLog\MissionArchiveStore.cs'),
     (Join-Path $repoRoot 'tests\unit\MissionLineageScenarios.cs')
 )

@@ -46,6 +46,10 @@ $treeE2e = Get-Content -LiteralPath $treeE2ePath -Raw
 Assert-True ($treeE2e -match 'scenario_dock') 'Mission-tree E2E suite does not cover docking.'
 Assert-True ($treeE2e -match 'scenario_split') 'Mission-tree E2E suite does not cover separation.'
 Assert-True ($treeE2e -match 'validate_tree') 'Mission-tree E2E suite does not validate tree invariants.'
+Assert-True ($treeE2e -match 'mission_timeline') 'Mission-tree E2E suite does not verify the resolved timeline.'
+Assert-True ($treeE2e -match 'rendered_timeline_count') 'Mission-tree E2E suite does not compare the UI with its timeline projection.'
+Assert-True ($e2e -match 'peak_g_force') 'Lifecycle E2E does not verify peak force as a timeline event.'
+Assert-True ($e2e -match 'cadence_saved_record') 'Lifecycle E2E does not verify rolling-record persistence.'
 Assert-True ($e2e -match 'UitkForKsp2\.Controls\.AppShell') 'E2E test does not verify the native Redux UI stack.'
 
 Write-Host 'Checking KSP 2 UI integration...'
@@ -55,6 +59,9 @@ Assert-True ($windowSource -match 'InvertedCornerBox') 'Mission Log does not use
 Assert-True ($windowSource -match 'UseStockScale = true') 'Mission Log does not opt into stock UI scaling.'
 Assert-True ($windowSource -match 'BlockGameInput = true') 'Mission Log does not block flight input beneath its window.'
 Assert-True ($windowSource -match 'EnableUiSounds') 'Mission Log does not enable KSP 2 UI sounds.'
+Assert-True ($windowSource -match 'MISSION STORY') 'Mission Log does not put the mission story first.'
+Assert-True ($windowSource -match '_tracker\.GetTimeline') 'Mission Log does not render the shared timeline projection.'
+Assert-True ($windowSource -notmatch 'Tree peak|Crew in tree|Permanent stats') 'Legacy dashboard-first summary copy remains in the story view.'
 Assert-True ($windowSource -notmatch 'GUILayout|GUI\.Window') 'Legacy IMGUI window code is still present.'
 $modSource = Get-Content -LiteralPath (Join-Path $repoRoot 'src\ReduxMissionLog\ReduxMissionLogMod.cs') -Raw
 Assert-True ($modSource -notmatch 'OnGUI') 'The mod still exposes an IMGUI render loop.'

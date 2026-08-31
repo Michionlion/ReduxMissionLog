@@ -123,10 +123,32 @@ namespace ReduxMissionLog
                 _window.SetVisible(true);
                 return DynValue.Nil;
             }));
+            api.Set("open_mission", Callback("ReduxMissionLog.open_mission", (context, args) =>
+            {
+                string missionId = RequiredString(args, 0, "mission ID");
+                MissionRecord mission = _tracker.FindById(missionId);
+                if (mission == null)
+                {
+                    throw new ScriptRuntimeException("Mission does not exist: " + missionId);
+                }
+                _window.OpenMission(mission);
+                return DynValue.Nil;
+            }));
+            api.Set("open_archive", Callback("ReduxMissionLog.open_archive", (context, args) =>
+            {
+                _window.OpenArchive();
+                return DynValue.Nil;
+            }));
             api.Set("window_visible", Callback("ReduxMissionLog.window_visible", (context, args) =>
                 DynValue.NewBoolean(_window.Visible)));
             api.Set("ui_stack", Callback("ReduxMissionLog.ui_stack", (context, args) =>
                 DynValue.NewString(_window.UiStack)));
+            api.Set("selected_mission_id", Callback(
+                "ReduxMissionLog.selected_mission_id",
+                (context, args) => StringValue(_window.SelectedMissionId)));
+            api.Set("rendered_timeline_count", Callback(
+                "ReduxMissionLog.rendered_timeline_count",
+                (context, args) => DynValue.NewNumber(_window.RenderedTimelineCount)));
             api.Set("scenario_launch", Callback("ReduxMissionLog.scenario_launch", (context, args) =>
             {
                 MissionRecord mission = _tracker.ScenarioLaunch(
@@ -183,6 +205,16 @@ namespace ReduxMissionLog
             api.Set("mission", Callback("ReduxMissionLog.mission", (context, args) =>
                 MissionValue(script,
                     _tracker.FindById(RequiredString(args, 0, "mission ID")))));
+            api.Set("mission_timeline", Callback("ReduxMissionLog.mission_timeline", (context, args) =>
+            {
+                string missionId = RequiredString(args, 0, "mission ID");
+                MissionRecord mission = _tracker.FindById(missionId);
+                if (mission == null)
+                {
+                    throw new ScriptRuntimeException("Mission does not exist: " + missionId);
+                }
+                return TimelineValue(script, mission);
+            }));
             api.Set("tree_snapshot", Callback("ReduxMissionLog.tree_snapshot", (context, args) =>
                 TreeSnapshot(script)));
             api.Set("validate_tree", Callback("ReduxMissionLog.validate_tree", (context, args) =>
@@ -202,6 +234,37 @@ namespace ReduxMissionLog
                     MissionValue(script, _tracker.Archive.Missions[index]));
             }
             result.Set("nodes", DynValue.NewTable(nodes));
+            return DynValue.NewTable(result);
+        }
+
+        private DynValue TimelineValue(Script script, MissionRecord mission)
+        {
+            var result = new Table(script);
+            System.Collections.Generic.List<MissionTimelineItem> timeline =
+                _tracker.GetTimeline(mission);
+            for (int index = 0; index < timeline.Count; index++)
+            {
+                MissionTimelineItem timelineItem = timeline[index];
+                MissionEvent entry = timelineItem.Event;
+                var item = new Table(script);
+                item.Set("eventId", StringValue(entry.EventId));
+                item.Set("kind", StringValue(entry.Kind));
+                item.Set("category", StringValue(timelineItem.Category));
+                item.Set("categoryLabel", StringValue(timelineItem.CategoryLabel));
+                item.Set("title", StringValue(entry.Title));
+                item.Set("recordedUtc", StringValue(entry.RecordedUtc));
+                item.Set("flightTime", DynValue.NewNumber(entry.FlightTimeSeconds));
+                item.Set("body", StringValue(entry.Body));
+                item.Set("situation", StringValue(entry.Situation));
+                item.Set("vesselIds", StringListValue(script, entry.VesselIds));
+                item.Set("operationId", StringValue(entry.OperationId));
+                item.Set("sourceMissionId", StringValue(timelineItem.SourceMission.MissionId));
+                item.Set("sourceTitle", StringValue(timelineItem.SourceMission.Title));
+                item.Set("derived", DynValue.NewBoolean(timelineItem.IsDerived));
+                item.Set("value", DynValue.NewNumber(timelineItem.Value));
+                item.Set("unit", StringValue(timelineItem.Unit));
+                result.Set(index + 1, DynValue.NewTable(item));
+            }
             return DynValue.NewTable(result);
         }
 
@@ -243,10 +306,12 @@ namespace ReduxMissionLog
             {
                 MissionEvent entry = mission.Events[index];
                 var item = new Table(script);
+                item.Set("eventId", StringValue(entry.EventId));
                 item.Set("kind", StringValue(entry.Kind));
                 item.Set("title", StringValue(entry.Title));
                 item.Set("body", StringValue(entry.Body));
                 item.Set("situation", StringValue(entry.Situation));
+                item.Set("recordedUtc", StringValue(entry.RecordedUtc));
                 item.Set("flightTime", DynValue.NewNumber(entry.FlightTimeSeconds));
                 item.Set("operationId", StringValue(entry.OperationId));
                 events.Set(index + 1, DynValue.NewTable(item));

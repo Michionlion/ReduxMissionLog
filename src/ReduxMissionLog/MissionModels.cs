@@ -77,7 +77,10 @@ namespace ReduxMissionLog
             return new MissionMoment
             {
                 RecordedUtc = DateTime.UtcNow.ToString("o"),
-                FlightTimeSeconds = Math.Max(0.0, flightTimeSeconds),
+                FlightTimeSeconds = double.IsNaN(flightTimeSeconds) ||
+                    double.IsInfinity(flightTimeSeconds)
+                        ? 0.0
+                        : Math.Max(0.0, flightTimeSeconds),
                 Body = body ?? string.Empty,
                 Situation = situation ?? string.Empty
             };

@@ -137,6 +137,10 @@ namespace ReduxMissionLog
         public List<MissionRecord> GetChildren(MissionRecord parent) { return _lineage.GetChildren(parent); }
         public MissionRecord GetParent(MissionRecord mission) { return _lineage.GetParent(mission); }
         public MissionAggregate GetAggregate(MissionRecord mission) { return _lineage.Aggregate(mission); }
+        public List<MissionTimelineItem> GetTimeline(MissionRecord mission)
+        {
+            return MissionTimeline.Build(_lineage, mission);
+        }
         public List<string> ValidateTree() { return _lineage.Validate(); }
 
         public bool CanTrackCurrentAs(MissionRecord mission)
@@ -588,27 +592,39 @@ namespace ReduxMissionLog
         {
             bool changed = false;
             mission.FlightDurationSeconds = Math.Max(
-                mission.FlightDurationSeconds, Math.Max(0.0, vessel.TimeSinceLaunch));
-            mission.MaximumAltitudeMeters = Math.Max(
-                mission.MaximumAltitudeMeters, Math.Max(0.0, vessel.AltitudeFromSeaLevel));
-            mission.MaximumSpeedMetersPerSecond = Math.Max(
-                mission.MaximumSpeedMetersPerSecond,
-                Math.Max(vessel.SrfSpeedMagnitude, vessel.OrbitalSpeed));
-            mission.MaximumGForce = Math.Max(mission.MaximumGForce, Math.Max(0.0, vessel.geeForce));
+                ValidMetricOrZero(mission.FlightDurationSeconds),
+                ValidMetricOrZero(vessel.TimeSinceLaunch));
+            double altitude = ValidMetricOrZero(vessel.AltitudeFromSeaLevel);
+            double surfaceSpeed = ValidMetricOrZero(vessel.SrfSpeedMagnitude);
+            double orbitalSpeed = ValidMetricOrZero(vessel.OrbitalSpeed);
+            double speed = Math.Max(surfaceSpeed, orbitalSpeed);
+            double gForce = ValidMetricOrZero(vessel.geeForce);
+            double priorAltitude = ValidMetricOrZero(mission.MaximumAltitudeMeters);
+            double priorSpeed = ValidMetricOrZero(mission.MaximumSpeedMetersPerSecond);
+            double priorGForce = ValidMetricOrZero(mission.MaximumGForce);
+            bool newAltitudeMaximum = altitude > priorAltitude;
+            bool newSpeedMaximum = speed > priorSpeed;
+            bool newGForceMaximum = gForce > priorGForce;
+            mission.MaximumAltitudeMeters = Math.Max(priorAltitude, altitude);
+            mission.MaximumSpeedMetersPerSecond = Math.Max(priorSpeed, speed);
+            mission.MaximumGForce = Math.Max(priorGForce, gForce);
 
             string body = SafeBody(vessel);
             string situation = vessel.Situation.ToString();
+            string previousSituation = mission.LastSituation;
             if (!string.Equals(body, mission.LastBody, StringComparison.OrdinalIgnoreCase))
             {
                 mission.LastBody = body;
                 AddUnique(mission.VisitedBodies, body);
-                AddEvent(mission, "body_changed", "Arrived at " + body, vessel, body, situation);
+                AddEvent(mission, "body_changed",
+                    "Entered " + body + "'s sphere of influence", vessel, body, situation);
                 changed = true;
             }
             bool leftPreLaunch =
-                string.Equals(mission.LastSituation, "PreLaunch", StringComparison.OrdinalIgnoreCase) &&
-                !string.Equals(situation, "PreLaunch", StringComparison.OrdinalIgnoreCase);
-            if ((vessel.HasLaunched || leftPreLaunch) && !HasEvent(mission, "launch"))
+                string.Equals(previousSituation, "PreLaunch", StringComparison.OrdinalIgnoreCase) &&
+                IsAirborneSituation(situation);
+            if (((vessel.HasLaunched && IsAirborneSituation(situation)) || leftPreLaunch) &&
+                !HasEvent(mission, "launch"))
             {
                 AddEvent(mission, "launch", "Launched from " + body, vessel, body, situation);
                 changed = true;
@@ -625,17 +641,54 @@ namespace ReduxMissionLog
                 AddEvent(mission, "orbit", "Entered orbit of " + body, vessel, body, situation);
                 changed = true;
             }
-            if (vessel.Landed && (vessel.HasLaunched || HasEvent(mission, "launch")) &&
+            bool wasAirborne = IsAirborneSituation(previousSituation);
+            if (vessel.Landed && IsLandedSituation(situation) && wasAirborne &&
+                HasEvent(mission, "launch") &&
                 !HasEventOnBody(mission, "landed", body))
             {
                 AddEvent(mission, "landed", "Landed on " + body, vessel, body, situation);
                 changed = true;
             }
-            if (vessel.Splashed && (vessel.HasLaunched || HasEvent(mission, "launch")) &&
+            if (vessel.Splashed && IsSplashedSituation(situation) && wasAirborne &&
+                HasEvent(mission, "launch") &&
                 !HasEventOnBody(mission, "splashed", body))
             {
                 AddEvent(mission, "splashed", "Splashed down on " + body, vessel, body, situation);
                 changed = true;
+            }
+            bool launched = HasEvent(mission, "launch");
+            if (launched)
+            {
+                changed |= UpdatePeakEvent(
+                    mission,
+                    "peak_altitude",
+                    FormatPeakAltitude(altitude),
+                    altitude,
+                    10.0,
+                    newAltitudeMaximum,
+                    vessel,
+                    body,
+                    situation);
+                changed |= UpdatePeakEvent(
+                    mission,
+                    "peak_speed",
+                    "Peak speed: " + speed.ToString("N1") + " m/s",
+                    speed,
+                    1.0,
+                    newSpeedMaximum,
+                    vessel,
+                    body,
+                    situation);
+                changed |= UpdatePeakEvent(
+                    mission,
+                    "peak_g_force",
+                    "Peak g-force: " + gForce.ToString("N2") + " g",
+                    gForce,
+                    1.05,
+                    newGForceMaximum,
+                    vessel,
+                    body,
+                    situation);
             }
             int previousCrewCount = mission.Crew.Count;
             CaptureCrew(game, vessel, mission.Crew);
@@ -651,7 +704,9 @@ namespace ReduxMissionLog
             status = NormalizeTerminalStatus(status);
             mission.Status = status;
             mission.EndedUtc = DateTime.UtcNow.ToString("o");
-            mission.FlightDurationSeconds = Math.Max(mission.FlightDurationSeconds, flightTime);
+            mission.FlightDurationSeconds = Math.Max(
+                ValidMetricOrZero(mission.FlightDurationSeconds),
+                ValidMetricOrZero(flightTime));
             mission.TrackedVesselIds.Clear();
             mission.TrackedTravelObjectId = null;
             mission.Events.Add(new MissionEvent
@@ -694,8 +749,8 @@ namespace ReduxMissionLog
             return mission != null && !mission.IsActive &&
                 !string.Equals(mission.Status, "Joined", StringComparison.OrdinalIgnoreCase) &&
                 !string.Equals(mission.Status, "Rejoined", StringComparison.OrdinalIgnoreCase) &&
-                Math.Max(0.0, currentFlightTime) + 0.5 >=
-                    Math.Max(0.0, mission.FlightDurationSeconds);
+                ValidMetricOrZero(currentFlightTime) + 0.5 >=
+                    ValidMetricOrZero(mission.FlightDurationSeconds);
         }
 
         private void Save(float realtime)
@@ -825,12 +880,80 @@ namespace ReduxMissionLog
                 Kind = kind,
                 Title = title,
                 RecordedUtc = DateTime.UtcNow.ToString("o"),
-                FlightTimeSeconds = Math.Max(0.0, vessel.TimeSinceLaunch),
+                FlightTimeSeconds = ValidMetricOrZero(vessel.TimeSinceLaunch),
                 Body = body,
                 Situation = situation,
                 RelatedMissionIds = new List<string>(),
                 VesselIds = new List<string> { SafeVesselId(vessel) }
             });
+        }
+
+        private static bool UpdatePeakEvent(
+            MissionRecord mission,
+            string kind,
+            string title,
+            double value,
+            double threshold,
+            bool isNewMaximum,
+            VesselComponent vessel,
+            string body,
+            string situation)
+        {
+            if (!isNewMaximum || value < threshold)
+            {
+                return false;
+            }
+
+            MissionEvent entry = null;
+            for (int index = 0; index < mission.Events.Count; index++)
+            {
+                if (string.Equals(mission.Events[index].Kind, kind,
+                    StringComparison.OrdinalIgnoreCase))
+                {
+                    entry = mission.Events[index];
+                    break;
+                }
+            }
+
+            bool created = entry == null;
+            if (created)
+            {
+                entry = new MissionEvent
+                {
+                    EventId = Guid.NewGuid().ToString("N"),
+                    Kind = kind,
+                    RelatedMissionIds = new List<string>(),
+                    VesselIds = new List<string>()
+                };
+                mission.Events.Add(entry);
+            }
+
+            entry.Title = title;
+            entry.RecordedUtc = DateTime.UtcNow.ToString("o");
+            entry.FlightTimeSeconds = ValidMetricOrZero(vessel.TimeSinceLaunch);
+            entry.Body = body;
+            entry.Situation = situation;
+            if (entry.VesselIds == null)
+            {
+                entry.VesselIds = new List<string>();
+            }
+            entry.VesselIds.Clear();
+            entry.VesselIds.Add(SafeVesselId(vessel));
+            return created;
+        }
+
+        private static string FormatPeakAltitude(double meters)
+        {
+            return meters >= 1000.0
+                ? "Peak altitude: " + (meters / 1000.0).ToString("N1") + " km"
+                : "Peak altitude: " + meters.ToString("N0") + " m";
+        }
+
+        private static double ValidMetricOrZero(double value)
+        {
+            return double.IsNaN(value) || double.IsInfinity(value) || value < 0.0
+                ? 0.0
+                : value;
         }
 
         private static bool HasEvent(MissionRecord mission, string kind)
@@ -938,7 +1061,32 @@ namespace ReduxMissionLog
 
         private static bool IsOrbitSituation(string situation)
         {
-            return situation.IndexOf("Orbit", StringComparison.OrdinalIgnoreCase) >= 0;
+            return string.Equals(situation, VesselSituations.Orbiting.ToString(),
+                StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsAirborneSituation(string situation)
+        {
+            return string.Equals(situation, VesselSituations.Flying.ToString(),
+                    StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(situation, VesselSituations.SubOrbital.ToString(),
+                    StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(situation, VesselSituations.Orbiting.ToString(),
+                    StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(situation, VesselSituations.Escaping.ToString(),
+                    StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsLandedSituation(string situation)
+        {
+            return string.Equals(situation, VesselSituations.Landed.ToString(),
+                StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsSplashedSituation(string situation)
+        {
+            return string.Equals(situation, VesselSituations.Splashed.ToString(),
+                StringComparison.OrdinalIgnoreCase);
         }
 
         private static string FriendlySituation(string situation)

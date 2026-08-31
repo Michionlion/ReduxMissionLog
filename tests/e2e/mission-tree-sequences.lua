@@ -19,6 +19,26 @@ local function mission(id)
     return value
 end
 
+local function operation_count(timeline, operation_id)
+    local count = 0
+    for _, item in ipairs(timeline) do
+        if item.operationId == operation_id then
+            count = count + 1
+        end
+    end
+    return count
+end
+
+local function source_count(timeline, source_mission_id)
+    local count = 0
+    for _, item in ipairs(timeline) do
+        if item.sourceMissionId == source_mission_id then
+            count = count + 1
+        end
+    end
+    return count
+end
+
 -- Two launches become children of one overarching mission. A duplicate event is harmless.
 mission_log.begin_test_session()
 mission_log.scenario_launch("launch-a", "Kerbin Station Core", "v-a")
@@ -75,8 +95,46 @@ mission_log.reload_archive()
 Test.assert.equal(mission(lander.missionId).status, "Rejoined", "reload should retain child status")
 Test.assert.equal(mission(ab.missionId).parentMissionId, abc.missionId, "reload should retain nested parentage")
 assert_valid("complex tree reload", 1, 6)
-mission_log.open_window()
+
+local nested_timeline = mission_log.mission_timeline(abc.missionId)
+Test.assert.equal(#nested_timeline, 9, "nested mission should resolve into nine meaningful moments")
+for index = 2, #nested_timeline do
+    Test.assert.true_(
+        nested_timeline[index - 1].recordedUtc <= nested_timeline[index].recordedUtc,
+        "mission story should be chronological at row " .. index)
+end
+for _, operation_id in ipairs({
+    "dock-a-b",
+    "dock-ab-c",
+    "split-lander-1",
+    "dock-lander-1",
+    "split-lander-2",
+    "dock-lander-2"
+}) do
+    Test.assert.equal(
+        operation_count(nested_timeline, operation_id),
+        1,
+        operation_id .. " should appear as one human-readable timeline moment")
+end
+Test.assert.greater(
+    source_count(nested_timeline, "launch-a"),
+    0,
+    "combined story should retain launch A as a named source leg")
+Test.assert.greater(
+    source_count(nested_timeline, lander.missionId),
+    0,
+    "combined story should retain the reusable lander sortie as a named source leg")
+
+mission_log.open_mission(abc.missionId)
 Test.wait.frames(5)
+Test.assert.equal(
+    mission_log.selected_mission_id(),
+    abc.missionId,
+    "story view should open the requested overarching mission")
+Test.assert.equal(
+    mission_log.rendered_timeline_count(),
+    #nested_timeline,
+    "story view should render every projected timeline moment")
 Test.assert.equal(
     mission_log.ui_stack(),
     "UitkForKsp2.Controls.AppShell",
@@ -137,7 +195,7 @@ Test.assert.equal(mission("manual-parent").status, "Joined", "displaced owner sh
 Test.assert.true_(mission("manual-parent").needsReview, "displaced owner should be marked for review")
 assert_valid("manual binding repair", 2, 2)
 
-mission_log.open_window()
+mission_log.open_archive()
 Test.wait.frames(5)
 Test.capture.screenshot("mission-tree-archive", {
     scale = 1,
@@ -147,5 +205,5 @@ Test.capture.screenshot("mission-tree-archive", {
 Test.report.value("validatedSequences", 15)
 Test.report.value("finalArchivePath", mission_log.archive_path())
 Test.report.attach(mission_log.archive_path())
-Test.report.note("Verified exact mission trees for docking, nested merges, sorties, reunions, identity churn, losses, manual corrections, idempotency, and reload")
+Test.report.note("Verified exact mission trees and projected stories for docking, nested merges, sorties, reunions, identity churn, losses, manual corrections, idempotency, and reload")
 mission_log.end_test_session()

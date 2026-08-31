@@ -41,6 +41,12 @@ namespace ReduxMissionLog
                 Run("malformed hierarchy and cycle are repaired", MalformedHierarchyRepair);
                 Run("duplicate vessel ownership is repaired", DuplicateOwnershipRepair);
                 Run("duplicate mission IDs unlink ambiguous children", DuplicateMissionIdRepair);
+                Run("timeline orders and deduplicates topology", TimelineOrdersTopology);
+                Run("timeline projects authoritative tree peaks", TimelineProjectsTreePeaks);
+                Run("timeline skips non-finite peaks", TimelineSkipsNonFinitePeaks);
+                Run("timeline resolves equal peak sources deterministically", TimelineResolvesEqualPeaks);
+                Run("legacy derived peaks are untimed read-only highlights", LegacyDerivedPeaksAreUntimed);
+                Run("mixed-case peak kind is projected once", MixedCasePeakIsProjectedOnce);
                 Run("serialization round-trip", SerializationRoundTrip);
 
                 Console.WriteLine(
@@ -940,6 +946,394 @@ namespace ReduxMissionLog
                 "all records should remain recoverable as independent roots");
         }
 
+        private static void TimelineOrdersTopology()
+        {
+            Scenario scenario = NewScenario();
+            MissionRecord launchA = scenario.Create("LaunchA", "v-a", "travel-a");
+            MissionRecord launchB = scenario.Create("LaunchB", "v-b", "travel-b");
+            MissionRecord expedition = scenario.Resolver.Dock(
+                CampaignId,
+                "v-a", "v-b", "v-ab", "travel-ab", "Joint Expedition",
+                Moment(10), "timeline-dock", false);
+            scenario.AssertValid("after timeline docking");
+            MissionRecord lander = scenario.Resolver.Split(
+                CampaignId,
+                "v-ab", "v-carrier", "travel-carrier", "Carrier",
+                "v-lander", "travel-lander", "Lander",
+                Moment(20), "timeline-split", null);
+            scenario.AssertValid("after timeline separation");
+            MissionRecord reunited = scenario.Resolver.Dock(
+                CampaignId,
+                "v-carrier", "v-lander", "v-rejoined", "travel-rejoined", "Expedition",
+                Moment(30), "timeline-rejoin", false);
+            scenario.AssertValid("after timeline reunion");
+            Same(expedition, reunited,
+                "the realistic reunion fixture should retain its expedition root");
+
+            // Projection must derive chronology from event timestamps, not storage order.
+            launchA.Events.Reverse();
+            launchB.Events.Reverse();
+            expedition.Events.Reverse();
+            lander.Events.Reverse();
+
+            List<MissionTimelineItem> timeline = MissionTimeline.Build(
+                scenario.Resolver, expedition);
+            AssertTimelineChronological(timeline,
+                "the combined expedition timeline should be chronological");
+
+            Equal(1, CountTimelineOperation(timeline, "timeline-dock"),
+                "docking audit records should collapse into one milestone");
+            Equal(1, CountTimelineOperation(timeline, "timeline-split"),
+                "split audit records should collapse into one milestone");
+            Equal(1, CountTimelineOperation(timeline, "timeline-rejoin"),
+                "reunion audit records should collapse into one milestone");
+
+            MissionTimelineItem docking = FindTimelineOperation(timeline, "timeline-dock");
+            MissionTimelineItem split = FindTimelineOperation(timeline, "timeline-split");
+            MissionTimelineItem rejoin = FindTimelineOperation(timeline, "timeline-rejoin");
+            True(docking != null, "the docking milestone should be projected");
+            True(split != null, "the separation milestone should be projected");
+            True(rejoin != null, "the reunion milestone should be projected");
+            Equal("missions_combined", docking.Event.Kind,
+                "the overarching docking event should win operation deduplication");
+            Equal(expedition.MissionId, docking.SourceMission.MissionId,
+                "docking should be attributed to the new expedition root");
+            Equal("topology", docking.Category,
+                "docking should use the topology category");
+            Equal("DOCKING", docking.CategoryLabel,
+                "docking should use its stable display label");
+
+            Equal("sub_mission_separated", split.Event.Kind,
+                "the parent-side separation event should win operation deduplication");
+            Equal(expedition.MissionId, split.SourceMission.MissionId,
+                "separation should be attributed to the continuing expedition");
+            Equal("topology", split.Category,
+                "separation should use the topology category");
+            Equal("SEPARATION", split.CategoryLabel,
+                "separation should use its stable display label");
+
+            Equal("sub_mission_rejoined", rejoin.Event.Kind,
+                "the returning sortie event should win operation deduplication");
+            Equal(lander.MissionId, rejoin.SourceMission.MissionId,
+                "reunion should be attributed to the returning sortie");
+            Equal("topology", rejoin.Category,
+                "reunion should use the topology category");
+            Equal("REUNION", rejoin.CategoryLabel,
+                "reunion should use its stable display label");
+
+            int dockIndex = IndexOfTimelineOperation(timeline, "timeline-dock");
+            int splitIndex = IndexOfTimelineOperation(timeline, "timeline-split");
+            int rejoinIndex = IndexOfTimelineOperation(timeline, "timeline-rejoin");
+            True(dockIndex >= 0 && dockIndex < splitIndex && splitIndex < rejoinIndex,
+                "topology milestones should follow dock, split, then reunion chronology");
+
+            List<MissionTimelineItem> repeated = MissionTimeline.Build(
+                scenario.Resolver, expedition);
+            AssertTimelineEquivalent(timeline, repeated,
+                "reprojecting the same scrambled tree should be stable");
+        }
+
+        private static void TimelineProjectsTreePeaks()
+        {
+            Scenario scenario = NewScenario();
+            MissionRecord launchA = scenario.Create("PeakA", "v-a", "travel-a");
+            MissionRecord launchB = scenario.Create("PeakB", "v-b", "travel-b");
+            launchA.MaximumAltitudeMeters = 12500.0;
+            launchA.MaximumSpeedMetersPerSecond = 250.0;
+            launchA.MaximumGForce = 1.2;
+            launchB.MaximumAltitudeMeters = 8000.0;
+            launchB.MaximumSpeedMetersPerSecond = 975.5;
+            launchB.MaximumGForce = 2.1;
+            AddTestEvent(
+                launchA,
+                "recorded-altitude",
+                "peak_altitude",
+                "Highest altitude — 12.5 km",
+                Moment(5),
+                null);
+
+            MissionRecord expedition = scenario.Resolver.Dock(
+                CampaignId,
+                "v-a", "v-b", "v-ab", "travel-ab", "Peak Expedition",
+                Moment(10), "peak-dock", false);
+            MissionRecord lander = scenario.Resolver.Split(
+                CampaignId,
+                "v-ab", "v-carrier", "travel-carrier", "Carrier",
+                "v-lander", "travel-lander", "Lander",
+                Moment(20), "peak-split", null);
+            lander.MaximumAltitudeMeters = 3000.0;
+            lander.MaximumSpeedMetersPerSecond = 400.0;
+            lander.MaximumGForce = 4.25;
+            scenario.AssertValid("before tree-wide peak projection");
+
+            int rawEventCount = CountEvents(scenario.Archive);
+            List<MissionTimelineItem> timeline = MissionTimeline.Build(
+                scenario.Resolver, expedition);
+            Equal(rawEventCount, CountEvents(scenario.Archive),
+                "timeline projection must not persist derived peak events");
+
+            Equal(1, CountTimelineKind(timeline, "peak_altitude"),
+                "the tree should show one authoritative altitude peak");
+            Equal(1, CountTimelineKind(timeline, "peak_speed"),
+                "the tree should show one authoritative speed peak");
+            Equal(1, CountTimelineKind(timeline, "peak_g_force"),
+                "the tree should show one authoritative g-force peak");
+
+            MissionTimelineItem altitude = FindTimelineKind(timeline, "peak_altitude");
+            MissionTimelineItem speed = FindTimelineKind(timeline, "peak_speed");
+            MissionTimelineItem gForce = FindTimelineKind(timeline, "peak_g_force");
+            True(altitude != null && speed != null && gForce != null,
+                "all three peak kinds should be projected");
+
+            Equal(launchA.MissionId, altitude.SourceMission.MissionId,
+                "altitude should be attributed to the highest mission leg");
+            Equal(12500.0, altitude.Value,
+                "altitude should use the tree-wide maximum");
+            Equal("m", altitude.Unit, "altitude should use meters");
+            True(!altitude.IsDerived,
+                "a recorded peak event should remain authoritative rather than derived");
+            Equal("recorded-altitude", altitude.Event.EventId,
+                "the recorded altitude event identity should be preserved");
+
+            Equal(launchB.MissionId, speed.SourceMission.MissionId,
+                "speed should be attributed to the fastest mission leg");
+            Equal(975.5, speed.Value,
+                "speed should use the tree-wide maximum");
+            Equal("m/s", speed.Unit, "speed should use meters per second");
+            True(speed.IsDerived,
+                "a legacy max without a peak event should receive a derived speed entry");
+            Equal("derived-peak_speed-" + launchB.MissionId, speed.Event.EventId,
+                "the legacy speed entry should have a stable derived identity");
+
+            Equal(lander.MissionId, gForce.SourceMission.MissionId,
+                "g-force should be attributed to the highest-force sortie");
+            Equal(4.25, gForce.Value,
+                "g-force should use the tree-wide maximum");
+            Equal("g", gForce.Unit, "g-force should use g units");
+            True(gForce.IsDerived,
+                "a legacy max without a peak event should receive a derived g-force entry");
+            Equal("derived-peak_g_force-" + lander.MissionId, gForce.Event.EventId,
+                "the legacy g-force entry should have a stable derived identity");
+            Equal("record", altitude.Category,
+                "recorded peaks should use the record category");
+            Equal("record", speed.Category,
+                "derived peaks should use the record category");
+            Equal("MISSION RECORD", gForce.CategoryLabel,
+                "peak entries should share a stable display label");
+
+            string json = JsonConvert.SerializeObject(scenario.Archive, Formatting.Indented);
+            MissionArchive restoredArchive = JsonConvert.DeserializeObject<MissionArchive>(json);
+            True(restoredArchive != null, "the peak fixture should deserialize");
+            MissionLineageResolver restoredResolver = new MissionLineageResolver(restoredArchive);
+            MissionRecord restoredRoot = restoredResolver.FindById(expedition.MissionId);
+            True(restoredRoot != null, "the peak projection root should survive reload");
+            AssertNoErrors(restoredResolver.Validate(),
+                "after peak projection serialization round-trip");
+            int restoredRawEvents = CountEvents(restoredArchive);
+            List<MissionTimelineItem> restoredTimeline = MissionTimeline.Build(
+                restoredResolver, restoredRoot);
+            Equal(restoredRawEvents, CountEvents(restoredArchive),
+                "reprojection after reload must not persist derived entries");
+            AssertTimelineEquivalent(timeline, restoredTimeline,
+                "peak projection should be stable after serialization and reload");
+        }
+
+        private static void TimelineSkipsNonFinitePeaks()
+        {
+            Scenario scenario = NewScenario();
+            MissionRecord mission = scenario.Create(
+                "NonFinite", "v-non-finite", "travel-non-finite");
+            mission.MaximumAltitudeMeters = double.NaN;
+            mission.MaximumSpeedMetersPerSecond = double.PositiveInfinity;
+            mission.MaximumGForce = double.NegativeInfinity;
+            int rawEventCount = CountEvents(scenario.Archive);
+
+            List<MissionTimelineItem> timeline = MissionTimeline.Build(
+                scenario.Resolver, mission);
+
+            Equal(0, CountTimelineKind(timeline, "peak_altitude"),
+                "NaN altitude must not emit a timeline peak");
+            Equal(0, CountTimelineKind(timeline, "peak_speed"),
+                "infinite speed must not emit a timeline peak");
+            Equal(0, CountTimelineKind(timeline, "peak_g_force"),
+                "infinite g-force must not emit a timeline peak");
+            Equal(rawEventCount, CountEvents(scenario.Archive),
+                "skipping invalid metrics must not mutate mission events");
+            Equal(1, timeline.Count,
+                "the valid mission-start milestone should remain visible");
+            Equal("mission_started", timeline[0].Event.Kind,
+                "invalid peaks should not displace ordinary milestones");
+        }
+
+        private static void TimelineResolvesEqualPeaks()
+        {
+            Scenario scenario = NewScenario();
+            MissionRecord zed = scenario.Create("Zed", "v-zed", "travel-zed");
+            MissionRecord alpha = scenario.Create("Alpha", "v-alpha", "travel-alpha");
+            zed.MaximumAltitudeMeters = 1000.0;
+            alpha.MaximumAltitudeMeters = 1000.0;
+            zed.MaximumSpeedMetersPerSecond = 500.0;
+            alpha.MaximumSpeedMetersPerSecond = 500.0;
+            zed.MaximumGForce = 3.0;
+            alpha.MaximumGForce = 3.0;
+
+            AddTestEvent(
+                alpha,
+                "alpha-recorded-altitude",
+                "peak_altitude",
+                "Recorded altitude",
+                Moment(7),
+                null);
+            AddTestEvent(
+                zed,
+                "zed-recorded-speed",
+                "peak_speed",
+                "Recorded speed Zed",
+                Moment(6),
+                null);
+            AddTestEvent(
+                alpha,
+                "alpha-recorded-speed",
+                "peak_speed",
+                "Recorded speed Alpha",
+                Moment(5),
+                null);
+
+            MissionRecord root = scenario.Resolver.Dock(
+                CampaignId,
+                "v-zed", "v-alpha", "v-equal", "travel-equal", "Equal Peaks",
+                Moment(10), "equal-peak-dock", false);
+            scenario.AssertValid("before equal peak projection");
+
+            List<MissionTimelineItem> timeline = MissionTimeline.Build(
+                scenario.Resolver, root);
+            MissionTimelineItem altitude = FindTimelineKind(timeline, "peak_altitude");
+            MissionTimelineItem speed = FindTimelineKind(timeline, "peak_speed");
+            MissionTimelineItem gForce = FindTimelineKind(timeline, "peak_g_force");
+            True(altitude != null && speed != null && gForce != null,
+                "equal valid maxima should still produce all record kinds");
+
+            Equal(alpha.MissionId, altitude.SourceMission.MissionId,
+                "a recorded altitude peak should beat an equal derived candidate");
+            True(!altitude.IsDerived,
+                "the preferred recorded altitude should not be marked derived");
+            Equal("alpha-recorded-altitude", altitude.Event.EventId,
+                "the recorded altitude event should remain authoritative");
+
+            Equal(alpha.MissionId, speed.SourceMission.MissionId,
+                "the earlier recorded event should deterministically win an equal speed tie");
+            Equal("alpha-recorded-speed", speed.Event.EventId,
+                "recorded-time tie-breaking should select the expected event");
+            True(!speed.IsDerived,
+                "the equal recorded speed should not become a derived entry");
+
+            Equal(alpha.MissionId, gForce.SourceMission.MissionId,
+                "equal derived maxima should use the lexically stable mission ID");
+            True(gForce.IsDerived,
+                "an equal max without recorded events should remain derived");
+            Equal("derived-peak_g_force-Alpha", gForce.Event.EventId,
+                "the deterministic derived winner should have a stable identity");
+
+            List<MissionTimelineItem> repeated = MissionTimeline.Build(
+                scenario.Resolver, root);
+            AssertTimelineEquivalent(timeline, repeated,
+                "equal-maximum selection should remain deterministic across projections");
+        }
+
+        private static void LegacyDerivedPeaksAreUntimed()
+        {
+            Scenario scenario = NewScenario();
+            MissionRecord legacy = scenario.Create(
+                "LegacyPeaks", "v-legacy", "travel-legacy");
+            legacy.MaximumAltitudeMeters = 25000.0;
+            legacy.MaximumSpeedMetersPerSecond = 1200.0;
+            legacy.MaximumGForce = 5.5;
+            legacy.LastBody = "Duna";
+            legacy.LastSituation = "Landed";
+            legacy.FlightDurationSeconds = 1234.0;
+            int rawEventCount = CountEvents(scenario.Archive);
+
+            List<MissionTimelineItem> timeline = MissionTimeline.Build(
+                scenario.Resolver, legacy);
+            Equal(rawEventCount, CountEvents(scenario.Archive),
+                "creating legacy highlights must not modify stored events");
+            Equal(3, CountDerivedTimelineItems(timeline),
+                "all three legacy maxima should become derived highlights");
+
+            int lastDatedIndex = -1;
+            int firstDerivedIndex = timeline.Count;
+            for (int index = 0; index < timeline.Count; index++)
+            {
+                MissionTimelineItem item = timeline[index];
+                if (item.IsDerived)
+                {
+                    firstDerivedIndex = Math.Min(firstDerivedIndex, index);
+                    Equal(string.Empty, item.Event.RecordedUtc,
+                        "legacy-derived highlights should not invent a UTC timestamp");
+                    Equal(string.Empty, item.Event.Body,
+                        "legacy-derived highlights should not invent a celestial body");
+                    Equal(string.Empty, item.Event.Situation,
+                        "legacy-derived highlights should not invent a flight situation");
+                    Equal(0.0, item.Event.FlightTimeSeconds,
+                        "legacy-derived highlights should not invent a flight time");
+                }
+                else if (!string.IsNullOrWhiteSpace(item.Event.RecordedUtc))
+                {
+                    lastDatedIndex = index;
+                }
+            }
+            True(lastDatedIndex >= 0 && firstDerivedIndex > lastDatedIndex,
+                "untimed legacy highlights should sort after dated milestones");
+            for (int index = firstDerivedIndex; index < timeline.Count; index++)
+            {
+                True(timeline[index].IsDerived,
+                    "all rows after the first legacy highlight should remain derived");
+            }
+
+            List<MissionTimelineItem> repeated = MissionTimeline.Build(
+                scenario.Resolver, legacy);
+            Equal(rawEventCount, CountEvents(scenario.Archive),
+                "reprojection must remain non-mutating");
+            AssertTimelineEquivalent(timeline, repeated,
+                "legacy-derived highlight projection should remain stable");
+        }
+
+        private static void MixedCasePeakIsProjectedOnce()
+        {
+            Scenario scenario = NewScenario();
+            MissionRecord mission = scenario.Create(
+                "MixedCase", "v-mixed", "travel-mixed");
+            mission.MaximumAltitudeMeters = 4321.0;
+            AddTestEvent(
+                mission,
+                "mixed-case-altitude",
+                "PeAk_AlTiTuDe",
+                "Mixed-case recorded altitude",
+                Moment(5),
+                null);
+            int rawEventCount = CountEvents(scenario.Archive);
+
+            List<MissionTimelineItem> timeline = MissionTimeline.Build(
+                scenario.Resolver, mission);
+            Equal(1, CountTimelineKindIgnoreCase(timeline, "peak_altitude"),
+                "a mixed-case stored peak should be recognized exactly once");
+            MissionTimelineItem altitude = FindTimelineKindIgnoreCase(
+                timeline, "peak_altitude");
+            True(altitude != null, "the mixed-case altitude peak should be projected");
+            Equal("PeAk_AlTiTuDe", altitude.Event.Kind,
+                "projection should retain the stored event kind without adding a duplicate");
+            Equal("mixed-case-altitude", altitude.Event.EventId,
+                "the stored mixed-case event should remain authoritative");
+            True(!altitude.IsDerived,
+                "a real mixed-case peak event should not be marked derived");
+            Equal(4321.0, altitude.Value,
+                "the mixed-case peak should use the mission maximum");
+            Equal("record", altitude.Category,
+                "mixed-case peak recognition should still use the record category");
+            Equal(rawEventCount, CountEvents(scenario.Archive),
+                "mixed-case projection should not modify stored events");
+        }
+
         private static void SerializationRoundTrip()
         {
             Scenario scenario = NewScenario();
@@ -1066,6 +1460,187 @@ namespace ReduxMissionLog
                 result += archive.Missions[index].Events.Count;
             }
             return result;
+        }
+
+        private static void AddTestEvent(
+            MissionRecord mission,
+            string eventId,
+            string kind,
+            string title,
+            MissionMoment moment,
+            string operationId)
+        {
+            mission.Events.Add(new MissionEvent
+            {
+                EventId = eventId,
+                OperationId = operationId,
+                Kind = kind,
+                Title = title,
+                RecordedUtc = moment.RecordedUtc,
+                FlightTimeSeconds = moment.FlightTimeSeconds,
+                Body = moment.Body,
+                Situation = moment.Situation,
+                RelatedMissionIds = new List<string>(),
+                VesselIds = new List<string>(mission.VesselIds)
+            });
+        }
+
+        private static MissionTimelineItem FindTimelineOperation(
+            List<MissionTimelineItem> timeline,
+            string operationId)
+        {
+            int index = IndexOfTimelineOperation(timeline, operationId);
+            return index < 0 ? null : timeline[index];
+        }
+
+        private static int IndexOfTimelineOperation(
+            List<MissionTimelineItem> timeline,
+            string operationId)
+        {
+            for (int index = 0; index < timeline.Count; index++)
+            {
+                if (string.Equals(timeline[index].Event.OperationId, operationId,
+                    StringComparison.Ordinal))
+                {
+                    return index;
+                }
+            }
+            return -1;
+        }
+
+        private static int CountTimelineOperation(
+            List<MissionTimelineItem> timeline,
+            string operationId)
+        {
+            int result = 0;
+            for (int index = 0; index < timeline.Count; index++)
+            {
+                if (string.Equals(timeline[index].Event.OperationId, operationId,
+                    StringComparison.Ordinal))
+                {
+                    result++;
+                }
+            }
+            return result;
+        }
+
+        private static MissionTimelineItem FindTimelineKind(
+            List<MissionTimelineItem> timeline,
+            string kind)
+        {
+            for (int index = 0; index < timeline.Count; index++)
+            {
+                if (string.Equals(timeline[index].Event.Kind, kind,
+                    StringComparison.Ordinal))
+                {
+                    return timeline[index];
+                }
+            }
+            return null;
+        }
+
+        private static int CountTimelineKind(
+            List<MissionTimelineItem> timeline,
+            string kind)
+        {
+            int result = 0;
+            for (int index = 0; index < timeline.Count; index++)
+            {
+                if (string.Equals(timeline[index].Event.Kind, kind,
+                    StringComparison.Ordinal))
+                {
+                    result++;
+                }
+            }
+            return result;
+        }
+
+        private static MissionTimelineItem FindTimelineKindIgnoreCase(
+            List<MissionTimelineItem> timeline,
+            string kind)
+        {
+            for (int index = 0; index < timeline.Count; index++)
+            {
+                if (string.Equals(timeline[index].Event.Kind, kind,
+                    StringComparison.OrdinalIgnoreCase))
+                {
+                    return timeline[index];
+                }
+            }
+            return null;
+        }
+
+        private static int CountTimelineKindIgnoreCase(
+            List<MissionTimelineItem> timeline,
+            string kind)
+        {
+            int result = 0;
+            for (int index = 0; index < timeline.Count; index++)
+            {
+                if (string.Equals(timeline[index].Event.Kind, kind,
+                    StringComparison.OrdinalIgnoreCase))
+                {
+                    result++;
+                }
+            }
+            return result;
+        }
+
+        private static int CountDerivedTimelineItems(List<MissionTimelineItem> timeline)
+        {
+            int result = 0;
+            for (int index = 0; index < timeline.Count; index++)
+            {
+                if (timeline[index].IsDerived)
+                {
+                    result++;
+                }
+            }
+            return result;
+        }
+
+        private static void AssertTimelineChronological(
+            List<MissionTimelineItem> timeline,
+            string message)
+        {
+            for (int index = 1; index < timeline.Count; index++)
+            {
+                string previous = timeline[index - 1].Event.RecordedUtc ?? string.Empty;
+                string current = timeline[index].Event.RecordedUtc ?? string.Empty;
+                True(string.Compare(previous, current, StringComparison.Ordinal) <= 0,
+                    message + " at items " + (index - 1) + " and " + index);
+            }
+        }
+
+        private static void AssertTimelineEquivalent(
+            List<MissionTimelineItem> expected,
+            List<MissionTimelineItem> actual,
+            string message)
+        {
+            Equal(expected.Count, actual.Count, message + " (item count)");
+            for (int index = 0; index < expected.Count; index++)
+            {
+                MissionTimelineItem left = expected[index];
+                MissionTimelineItem right = actual[index];
+                Equal(left.Event.EventId, right.Event.EventId,
+                    message + " (event ID at " + index + ")");
+                Equal(left.Event.Kind, right.Event.Kind,
+                    message + " (kind at " + index + ")");
+                Equal(left.Event.OperationId, right.Event.OperationId,
+                    message + " (operation ID at " + index + ")");
+                Equal(left.Event.RecordedUtc, right.Event.RecordedUtc,
+                    message + " (recorded time at " + index + ")");
+                Equal(left.SourceMission.MissionId, right.SourceMission.MissionId,
+                    message + " (source mission at " + index + ")");
+                Equal(left.Category, right.Category,
+                    message + " (category at " + index + ")");
+                Equal(left.IsDerived, right.IsDerived,
+                    message + " (derived flag at " + index + ")");
+                Equal(left.Value, right.Value,
+                    message + " (value at " + index + ")");
+                Equal(left.Unit, right.Unit,
+                    message + " (unit at " + index + ")");
+            }
         }
 
         private static void AssertRejectedSplitIsAtomic(

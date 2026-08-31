@@ -5,7 +5,7 @@
   "author": "Michionlion",
   "description": "A quiet, persistent campaign archive that turns KSP 2 flights into readable mission stories.",
   "source": "https://github.com/Michionlion/ReduxMissionLog",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "ksp2_version": {
     "min": "0.2.8.5",
     "max": "*"

@@ -11,6 +11,7 @@
 - Mission Log is observational. It must not alter vessel physics, progression, resources, contracts, or save ownership.
 - Store its archive as local sidecar data and recover safely from missing, malformed, or older data.
 - Prefer concise, meaningful milestones over continuous telemetry.
+- Keep the chronological mission story as the primary window surface. Treat record values as timeline moments; keep archive browsing, editing, and tree repair secondary.
 - Automatic capture is the default; player edits and manual completion remain available.
 - Build player-facing windows with Redux's `UitkForKsp2` stack and shared KSP 2 controls; do not reintroduce an IMGUI render loop.
 - The first implementation targets KSP 2 Redux 0.2.8.5, SpaceWarp2 2.x, and Unity 6000.4.1f1.

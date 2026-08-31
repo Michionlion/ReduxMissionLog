@@ -139,6 +139,39 @@ namespace ReduxMissionLog
                 _window.OpenArchive();
                 return DynValue.Nil;
             }));
+            api.Set("open_editor", Callback("ReduxMissionLog.open_editor", (context, args) =>
+            {
+                _window.OpenEditorForReview(RequiredMission(args, 0));
+                return DynValue.Nil;
+            }));
+            api.Set("open_organizer", Callback(
+                "ReduxMissionLog.open_organizer",
+                (context, args) =>
+                {
+                    _window.OpenOrganizerForReview(RequiredMission(args, 0));
+                    return DynValue.Nil;
+                }));
+            api.Set("set_review_scroll", Callback(
+                "ReduxMissionLog.set_review_scroll",
+                (context, args) =>
+                {
+                    _window.SetReviewScroll(
+                        RequiredString(args, 0, "review view"),
+                        RequiredString(args, 1, "review scroll anchor"));
+                    return DynValue.Nil;
+                }));
+            api.Set("set_archive_collapsed", Callback(
+                "ReduxMissionLog.set_archive_collapsed",
+                (context, args) =>
+                {
+                    _window.SetArchiveCollapsed(
+                        RequiredString(args, 0, "mission ID"),
+                        RequiredBoolean(args, 1, "collapsed state"));
+                    return DynValue.Nil;
+                }));
+            api.Set("review_ui_state", Callback(
+                "ReduxMissionLog.review_ui_state",
+                (context, args) => ReviewUiState(script)));
             api.Set("window_visible", Callback("ReduxMissionLog.window_visible", (context, args) =>
                 DynValue.NewBoolean(_window.Visible)));
             api.Set("ui_stack", Callback("ReduxMissionLog.ui_stack", (context, args) =>
@@ -165,7 +198,10 @@ namespace ReduxMissionLog
                     RequiredString(args, 2, "result vessel ID"),
                     RequiredString(args, 3, "result name"),
                     RequiredString(args, 4, "operation ID"),
-                    OptionalBoolean(args, 5, false));
+                    OptionalBoolean(args, 5, false),
+                    OptionalNonNegativeNumber(args, 6, 10.0, "flight time"),
+                    OptionalNonEmptyString(args, 7, "Kerbin", "body"),
+                    OptionalNonEmptyString(args, 8, "Orbiting", "situation"));
                 return MissionValue(script, mission);
             }));
             api.Set("scenario_split", Callback("ReduxMissionLog.scenario_split", (context, args) =>
@@ -176,7 +212,10 @@ namespace ReduxMissionLog
                     RequiredString(args, 2, "detached vessel ID"),
                     RequiredString(args, 3, "detached name"),
                     RequiredString(args, 4, "detached travel ID"),
-                    RequiredString(args, 5, "operation ID"));
+                    RequiredString(args, 5, "operation ID"),
+                    OptionalNonNegativeNumber(args, 6, 20.0, "flight time"),
+                    OptionalNonEmptyString(args, 7, "Mun", "body"),
+                    OptionalNonEmptyString(args, 8, "Orbiting", "situation"));
                 return MissionValue(script, mission);
             }));
             api.Set("scenario_adopt", Callback("ReduxMissionLog.scenario_adopt", (context, args) =>
@@ -202,6 +241,40 @@ namespace ReduxMissionLog
                 MissionValue(script, _tracker.ScenarioTrack(
                     RequiredString(args, 0, "mission ID"),
                     RequiredString(args, 1, "vessel ID")))));
+            api.Set("scenario_event", Callback("ReduxMissionLog.scenario_event", (context, args) =>
+                MissionValue(script, _tracker.ScenarioEvent(
+                    RequiredString(args, 0, "mission ID"),
+                    RequiredString(args, 1, "event kind"),
+                    RequiredString(args, 2, "event title"),
+                    RequiredNonNegativeNumber(args, 3, "flight time"),
+                    RequiredString(args, 4, "body"),
+                    RequiredString(args, 5, "situation"),
+                    OptionalString(args, 6, "operation ID")))));
+            api.Set("scenario_records", Callback(
+                "ReduxMissionLog.scenario_records",
+                (context, args) => MissionValue(script, _tracker.ScenarioRecords(
+                    RequiredString(args, 0, "mission ID"),
+                    RequiredNonNegativeNumber(args, 1, "altitude"),
+                    RequiredNonNegativeNumber(args, 2, "speed"),
+                    RequiredNonNegativeNumber(args, 3, "g-force")))));
+            api.Set("scenario_note", Callback("ReduxMissionLog.scenario_note", (context, args) =>
+                MissionValue(script, _tracker.ScenarioNote(
+                    RequiredString(args, 0, "mission ID"),
+                    RequiredText(args, 1, "mission note")))));
+            api.Set("scenario_crew", Callback("ReduxMissionLog.scenario_crew", (context, args) =>
+            {
+                string missionId = RequiredString(args, 0, "mission ID");
+                var crew = new System.Collections.Generic.List<string>();
+                for (int index = 1; index < args.Count; index++)
+                {
+                    crew.Add(RequiredString(args, index, "crew name"));
+                }
+                return MissionValue(script, _tracker.ScenarioCrew(missionId, crew));
+            }));
+            api.Set("scenario_review", Callback("ReduxMissionLog.scenario_review", (context, args) =>
+                MissionValue(script, _tracker.ScenarioReview(
+                    RequiredString(args, 0, "mission ID"),
+                    RequiredText(args, 1, "review reason")))));
             api.Set("mission", Callback("ReduxMissionLog.mission", (context, args) =>
                 MissionValue(script,
                     _tracker.FindById(RequiredString(args, 0, "mission ID")))));
@@ -234,6 +307,29 @@ namespace ReduxMissionLog
                     MissionValue(script, _tracker.Archive.Missions[index]));
             }
             result.Set("nodes", DynValue.NewTable(nodes));
+            return DynValue.NewTable(result);
+        }
+
+        private DynValue ReviewUiState(Script script)
+        {
+            var result = new Table(script);
+            result.Set("visible", DynValue.NewBoolean(_window.Visible));
+            result.Set("view", DynValue.NewString(_window.ReviewView));
+            result.Set("sheet", DynValue.NewString(_window.ReviewSheet));
+            result.Set("selectedMissionId", StringValue(_window.SelectedMissionId));
+            result.Set("renderedTimelineCount",
+                DynValue.NewNumber(_window.RenderedTimelineCount));
+            result.Set("archiveRenderedNodeCount",
+                DynValue.NewNumber(_window.ArchiveRenderedNodeCount));
+            result.Set("collapsedMissionCount",
+                DynValue.NewNumber(_window.CollapsedMissionCount));
+            result.Set("scrollValue", DynValue.NewNumber(_window.ReviewScrollValue));
+            result.Set("scrollMaximum", DynValue.NewNumber(_window.ReviewScrollMaximum));
+            result.Set("scrollNormalized",
+                DynValue.NewNumber(_window.ReviewScrollNormalized));
+            result.Set("scrollAnchor", DynValue.NewString(_window.ReviewScrollAnchor));
+            result.Set("windowWidth", DynValue.NewNumber(_window.ReviewWindowWidth));
+            result.Set("windowHeight", DynValue.NewNumber(_window.ReviewWindowHeight));
             return DynValue.NewTable(result);
         }
 
@@ -282,8 +378,10 @@ namespace ReduxMissionLog
             result.Set("title", StringValue(mission.Title));
             result.Set("vessel", StringValue(mission.VesselName));
             result.Set("status", StringValue(mission.Status));
+            result.Set("notes", StringValue(mission.Notes));
             result.Set("body", StringValue(mission.LastBody));
             result.Set("situation", StringValue(mission.LastSituation));
+            result.Set("flightDuration", DynValue.NewNumber(mission.FlightDurationSeconds));
             result.Set("maximumAltitude", DynValue.NewNumber(mission.MaximumAltitudeMeters));
             result.Set("maximumSpeed", DynValue.NewNumber(mission.MaximumSpeedMetersPerSecond));
             result.Set("maximumGForce", DynValue.NewNumber(mission.MaximumGForce));
@@ -300,6 +398,8 @@ namespace ReduxMissionLog
             result.Set("vesselIds", StringListValue(script, mission.VesselIds));
             result.Set("travelObjectIds", StringListValue(script, mission.TravelObjectIds));
             result.Set("trackedVesselIds", StringListValue(script, mission.TrackedVesselIds));
+            result.Set("crew", StringListValue(script, mission.Crew));
+            result.Set("visitedBodies", StringListValue(script, mission.VisitedBodies));
 
             var events = new Table(script);
             for (int index = 0; index < mission.Events.Count; index++)
@@ -381,6 +481,101 @@ namespace ReduxMissionLog
                 throw new ScriptRuntimeException("Argument " + (index + 1) + " must be a boolean.");
             }
             return arguments[index].Boolean;
+        }
+
+        private static bool RequiredBoolean(
+            CallbackArguments arguments,
+            int index,
+            string label)
+        {
+            if (arguments.Count <= index || arguments[index].Type != DataType.Boolean)
+            {
+                throw new ScriptRuntimeException(label + " must be a boolean.");
+            }
+            return arguments[index].Boolean;
+        }
+
+        private MissionRecord RequiredMission(
+            CallbackArguments arguments,
+            int index)
+        {
+            string missionId = RequiredString(arguments, index, "mission ID");
+            MissionRecord mission = _tracker.FindById(missionId);
+            if (mission == null)
+            {
+                throw new ScriptRuntimeException("Mission does not exist: " + missionId);
+            }
+            return mission;
+        }
+
+        private static string RequiredText(
+            CallbackArguments arguments,
+            int index,
+            string label)
+        {
+            if (arguments.Count <= index || arguments[index].Type != DataType.String)
+            {
+                throw new ScriptRuntimeException(label + " must be a string.");
+            }
+            return arguments[index].String;
+        }
+
+        private static double RequiredNonNegativeNumber(
+            CallbackArguments arguments,
+            int index,
+            string label)
+        {
+            if (arguments.Count <= index || arguments[index].Type != DataType.Number)
+            {
+                throw new ScriptRuntimeException(label + " must be a number.");
+            }
+            double value = arguments[index].Number;
+            if (double.IsNaN(value) || double.IsInfinity(value) || value < 0.0)
+            {
+                throw new ScriptRuntimeException(
+                    label + " must be a finite, non-negative number.");
+            }
+            return value;
+        }
+
+        private static double OptionalNonNegativeNumber(
+            CallbackArguments arguments,
+            int index,
+            double fallback,
+            string label)
+        {
+            return arguments.Count <= index || arguments[index].IsNil()
+                ? fallback
+                : RequiredNonNegativeNumber(arguments, index, label);
+        }
+
+        private static string OptionalNonEmptyString(
+            CallbackArguments arguments,
+            int index,
+            string fallback,
+            string label)
+        {
+            return arguments.Count <= index || arguments[index].IsNil()
+                ? fallback
+                : RequiredString(arguments, index, label);
+        }
+
+        private static string OptionalString(
+            CallbackArguments arguments,
+            int index,
+            string label)
+        {
+            if (arguments.Count <= index || arguments[index].IsNil())
+            {
+                return null;
+            }
+            if (arguments[index].Type != DataType.String)
+            {
+                throw new ScriptRuntimeException(label + " must be a string when provided.");
+            }
+            return string.IsNullOrWhiteSpace(arguments[index].String)
+                ? null
+                : arguments[index].String;
         }
 
         private static DynValue StringValue(string value)

@@ -25,6 +25,8 @@ namespace ReduxMissionLog
         private AppShell _shell;
         private VisualElement _archiveView;
         private VisualElement _storyView;
+        private ScrollView _archiveScroll;
+        private ScrollView _timelineScroll;
         private VisualElement _archiveTree;
         private Label _archiveCount;
         private Button _backToStoryButton;
@@ -68,6 +70,60 @@ namespace ReduxMissionLog
         public bool Visible { get { return _visible; } }
         public string SelectedMissionId { get { return _selectedMissionId; } }
         public int RenderedTimelineCount { get; private set; }
+        public string ReviewView { get { return _showArchive ? "archive" : "story"; } }
+        public string ReviewSheet
+        {
+            get
+            {
+                if (_showEditor)
+                {
+                    return "editor";
+                }
+                return _showManage ? "organizer" : "none";
+            }
+        }
+        public int ArchiveRenderedNodeCount
+        {
+            get { return _archiveTree == null ? 0 : _archiveTree.childCount; }
+        }
+        public int CollapsedMissionCount { get { return _collapsedMissionIds.Count; } }
+        public float ReviewScrollValue { get { return CurrentReviewScrollValue(); } }
+        public float ReviewScrollMaximum { get { return CurrentReviewScrollMaximum(); } }
+        public float ReviewScrollNormalized
+        {
+            get
+            {
+                ScrollView scroll = CurrentReviewScroll();
+                if (scroll == null)
+                {
+                    return 0f;
+                }
+                float low = scroll.verticalScroller.lowValue;
+                float high = scroll.verticalScroller.highValue;
+                return high <= low ? 0f : Mathf.Clamp01(
+                    (scroll.verticalScroller.value - low) / (high - low));
+            }
+        }
+        public string ReviewScrollAnchor
+        {
+            get
+            {
+                float normalized = ReviewScrollNormalized;
+                if (normalized <= 0.05f)
+                {
+                    return "top";
+                }
+                return normalized >= 0.95f ? "bottom" : "middle";
+            }
+        }
+        public float ReviewWindowWidth
+        {
+            get { return ResolvedDimension(true, DefaultWidth); }
+        }
+        public float ReviewWindowHeight
+        {
+            get { return ResolvedDimension(false, DefaultHeight); }
+        }
 
         public string UiStack
         {
@@ -144,6 +200,107 @@ namespace ReduxMissionLog
             _showEditor = false;
             _showManage = false;
             Refresh();
+        }
+
+        public void OpenEditorForReview(MissionRecord mission)
+        {
+            if (mission == null)
+            {
+                throw new InvalidOperationException("A mission is required to open the editor.");
+            }
+            OpenMission(mission);
+            ShowEditor();
+        }
+
+        public void OpenOrganizerForReview(MissionRecord mission)
+        {
+            if (mission == null)
+            {
+                throw new InvalidOperationException("A mission is required to open the organizer.");
+            }
+            OpenMission(mission);
+            ShowManage();
+        }
+
+        public void SetArchiveCollapsed(string missionId, bool collapsed)
+        {
+            if (_tracker.FindById(missionId) == null)
+            {
+                throw new InvalidOperationException("Mission does not exist: " + missionId);
+            }
+            if (collapsed)
+            {
+                _collapsedMissionIds.Add(missionId);
+            }
+            else
+            {
+                _collapsedMissionIds.Remove(missionId);
+            }
+            if (_visible && _showArchive)
+            {
+                PopulateArchive();
+            }
+        }
+
+        public bool IsArchiveCollapsed(string missionId)
+        {
+            return !string.IsNullOrWhiteSpace(missionId) &&
+                _collapsedMissionIds.Contains(missionId);
+        }
+
+        public void SetReviewScroll(string view, string anchor)
+        {
+            ScrollView scroll;
+            if (string.Equals(view, "timeline", StringComparison.OrdinalIgnoreCase))
+            {
+                if (_showArchive)
+                {
+                    throw new InvalidOperationException(
+                        "The timeline can only be scrolled while a mission story is open.");
+                }
+                scroll = _timelineScroll;
+            }
+            else if (string.Equals(view, "archive", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!_showArchive)
+                {
+                    throw new InvalidOperationException(
+                        "The archive can only be scrolled while the archive is open.");
+                }
+                scroll = _archiveScroll;
+            }
+            else
+            {
+                throw new ArgumentException(
+                    "Review scroll view must be 'timeline' or 'archive'.", "view");
+            }
+            if (scroll == null)
+            {
+                throw new InvalidOperationException("The requested review view is not ready.");
+            }
+
+            float normalized;
+            if (string.Equals(anchor, "top", StringComparison.OrdinalIgnoreCase))
+            {
+                normalized = 0f;
+            }
+            else if (string.Equals(anchor, "middle", StringComparison.OrdinalIgnoreCase))
+            {
+                normalized = 0.5f;
+            }
+            else if (string.Equals(anchor, "bottom", StringComparison.OrdinalIgnoreCase))
+            {
+                normalized = 1f;
+            }
+            else
+            {
+                throw new ArgumentException(
+                    "Review scroll anchor must be 'top', 'middle', or 'bottom'.", "anchor");
+            }
+
+            float low = scroll.verticalScroller.lowValue;
+            float high = scroll.verticalScroller.highValue;
+            scroll.verticalScroller.value = low + ((high - low) * normalized);
         }
 
         public void RefreshIfVisible()
@@ -269,15 +426,15 @@ namespace ReduxMissionLog
             panel.style.minHeight = 0f;
             _archiveView.Add(panel);
 
-            ScrollView scroll = new ScrollView(ScrollViewMode.Vertical)
+            _archiveScroll = new ScrollView(ScrollViewMode.Vertical)
             {
                 name = "mission-archive-scroll"
             };
-            scroll.style.flexGrow = 1f;
-            scroll.style.minHeight = 0f;
-            scroll.horizontalScrollerVisibility = ScrollerVisibility.Hidden;
-            panel.Add(scroll);
-            _archiveTree = scroll.contentContainer;
+            _archiveScroll.style.flexGrow = 1f;
+            _archiveScroll.style.minHeight = 0f;
+            _archiveScroll.horizontalScrollerVisibility = ScrollerVisibility.Hidden;
+            panel.Add(_archiveScroll);
+            _archiveTree = _archiveScroll.contentContainer;
         }
 
         private void BuildStoryView()
@@ -371,16 +528,45 @@ namespace ReduxMissionLog
             timelineHeader.Add(_timelineCount);
             _storyView.Add(timelineHeader);
 
-            ScrollView timelineScroll = new ScrollView(ScrollViewMode.Vertical)
+            _timelineScroll = new ScrollView(ScrollViewMode.Vertical)
             {
                 name = "mission-timeline-scroll"
             };
-            timelineScroll.style.flexGrow = 1f;
-            timelineScroll.style.minHeight = 0f;
-            timelineScroll.style.marginTop = 5f;
-            timelineScroll.horizontalScrollerVisibility = ScrollerVisibility.Hidden;
-            _storyView.Add(timelineScroll);
-            _timeline = timelineScroll.contentContainer;
+            _timelineScroll.style.flexGrow = 1f;
+            _timelineScroll.style.minHeight = 0f;
+            _timelineScroll.style.marginTop = 5f;
+            _timelineScroll.horizontalScrollerVisibility = ScrollerVisibility.Hidden;
+            _storyView.Add(_timelineScroll);
+            _timeline = _timelineScroll.contentContainer;
+        }
+
+        private ScrollView CurrentReviewScroll()
+        {
+            return _showArchive ? _archiveScroll : _timelineScroll;
+        }
+
+        private float CurrentReviewScrollValue()
+        {
+            ScrollView scroll = CurrentReviewScroll();
+            return scroll == null ? 0f : scroll.verticalScroller.value;
+        }
+
+        private float CurrentReviewScrollMaximum()
+        {
+            ScrollView scroll = CurrentReviewScroll();
+            return scroll == null ? 0f : scroll.verticalScroller.highValue;
+        }
+
+        private float ResolvedDimension(bool width, float fallback)
+        {
+            if (_shell == null)
+            {
+                return fallback;
+            }
+            float value = width ? _shell.resolvedStyle.width : _shell.resolvedStyle.height;
+            return float.IsNaN(value) || float.IsInfinity(value) || value <= 0f
+                ? fallback
+                : value;
         }
 
         private void BuildEditorSheet()

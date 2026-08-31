@@ -48,6 +48,14 @@ Assert-True ($treeE2e -match 'scenario_split') 'Mission-tree E2E suite does not 
 Assert-True ($treeE2e -match 'validate_tree') 'Mission-tree E2E suite does not validate tree invariants.'
 Assert-True ($treeE2e -match 'mission_timeline') 'Mission-tree E2E suite does not verify the resolved timeline.'
 Assert-True ($treeE2e -match 'rendered_timeline_count') 'Mission-tree E2E suite does not compare the UI with its timeline projection.'
+$galleryE2ePath = Join-Path $repoRoot 'tests\e2e\mission-gallery.lua'
+Assert-True (Test-Path -LiteralPath $galleryE2ePath) 'Mission review gallery suite is missing.'
+$galleryE2e = Get-Content -LiteralPath $galleryE2ePath -Raw
+Assert-True ($galleryE2e -match 'scenario_event') 'Mission gallery does not author realistic mission moments.'
+Assert-True ($galleryE2e -match 'set_review_scroll') 'Mission gallery does not cover the timeline at multiple scroll positions.'
+Assert-True ($galleryE2e -match 'set_archive_collapsed') 'Mission gallery does not cover archive tree collapse state.'
+Assert-True ($galleryE2e -match 'scenario_review') 'Mission gallery does not cover lineage review UI.'
+Assert-True ($galleryE2e -match 'Test\.capture\.screenshot') 'Mission gallery does not capture in-game review images.'
 Assert-True ($e2e -match 'peak_g_force') 'Lifecycle E2E does not verify peak force as a timeline event.'
 Assert-True ($e2e -match 'cadence_saved_record') 'Lifecycle E2E does not verify rolling-record persistence.'
 Assert-True ($e2e -match 'UitkForKsp2\.Controls\.AppShell') 'E2E test does not verify the native Redux UI stack.'
@@ -61,6 +69,8 @@ Assert-True ($windowSource -match 'BlockGameInput = true') 'Mission Log does not
 Assert-True ($windowSource -match 'EnableUiSounds') 'Mission Log does not enable KSP 2 UI sounds.'
 Assert-True ($windowSource -match 'MISSION STORY') 'Mission Log does not put the mission story first.'
 Assert-True ($windowSource -match '_tracker\.GetTimeline') 'Mission Log does not render the shared timeline projection.'
+Assert-True ($windowSource -match 'SetReviewScroll') 'Mission Log does not expose semantic gallery scrolling.'
+Assert-True ($windowSource -match 'SetArchiveCollapsed') 'Mission Log does not expose semantic archive collapse for review.'
 Assert-True ($windowSource -notmatch 'Tree peak|Crew in tree|Permanent stats') 'Legacy dashboard-first summary copy remains in the story view.'
 Assert-True ($windowSource -notmatch 'GUILayout|GUI\.Window') 'Legacy IMGUI window code is still present.'
 $modSource = Get-Content -LiteralPath (Join-Path $repoRoot 'src\ReduxMissionLog\ReduxMissionLogMod.cs') -Raw

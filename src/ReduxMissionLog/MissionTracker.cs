@@ -432,6 +432,32 @@ namespace ReduxMissionLog
             string operationId,
             bool manual)
         {
+            return ScenarioDock(
+                leftVesselId,
+                rightVesselId,
+                resultVesselId,
+                resultName,
+                operationId,
+                manual,
+                10.0,
+                "Kerbin",
+                "Orbiting");
+        }
+
+        public MissionRecord ScenarioDock(
+            string leftVesselId,
+            string rightVesselId,
+            string resultVesselId,
+            string resultName,
+            string operationId,
+            bool manual,
+            double flightTimeSeconds,
+            string body,
+            string situation)
+        {
+            ValidateScenarioNumber(flightTimeSeconds, "flight time");
+            string momentBody = ValidateScenarioText(body, "body");
+            string momentSituation = ValidateScenarioText(situation, "situation");
             MissionRecord mission = _lineage.Dock(
                 ScenarioCampaignId,
                 leftVesselId,
@@ -439,7 +465,7 @@ namespace ReduxMissionLog
                 resultVesselId,
                 "travel-" + resultVesselId,
                 resultName,
-                MissionMoment.Now(10.0, "Kerbin", "Orbiting"),
+                MissionMoment.Now(flightTimeSeconds, momentBody, momentSituation),
                 operationId,
                 manual);
             Save(UnityEngine.Time.realtimeSinceStartup);
@@ -454,6 +480,32 @@ namespace ReduxMissionLog
             string detachedTravelObjectId,
             string operationId)
         {
+            return ScenarioSplit(
+                sourceVesselId,
+                continuationVesselId,
+                detachedVesselId,
+                detachedName,
+                detachedTravelObjectId,
+                operationId,
+                20.0,
+                "Mun",
+                "Orbiting");
+        }
+
+        public MissionRecord ScenarioSplit(
+            string sourceVesselId,
+            string continuationVesselId,
+            string detachedVesselId,
+            string detachedName,
+            string detachedTravelObjectId,
+            string operationId,
+            double flightTimeSeconds,
+            string body,
+            string situation)
+        {
+            ValidateScenarioNumber(flightTimeSeconds, "flight time");
+            string momentBody = ValidateScenarioText(body, "body");
+            string momentSituation = ValidateScenarioText(situation, "situation");
             MissionRecord mission = _lineage.Split(
                 ScenarioCampaignId,
                 sourceVesselId,
@@ -463,7 +515,7 @@ namespace ReduxMissionLog
                 detachedVesselId,
                 detachedTravelObjectId,
                 detachedName,
-                MissionMoment.Now(20.0, "Mun", "Orbiting"),
+                MissionMoment.Now(flightTimeSeconds, momentBody, momentSituation),
                 operationId,
                 new string[0]);
             Save(UnityEngine.Time.realtimeSinceStartup);
@@ -505,6 +557,158 @@ namespace ReduxMissionLog
                 "scenario-track-" + missionId + "-" + vesselId);
             Save(UnityEngine.Time.realtimeSinceStartup);
             return mission;
+        }
+
+        public MissionRecord ScenarioEvent(
+            string missionId,
+            string kind,
+            string title,
+            double flightTimeSeconds,
+            string body,
+            string situation,
+            string operationId)
+        {
+            ValidateScenarioNumber(flightTimeSeconds, "flight time");
+            if (string.IsNullOrWhiteSpace(kind))
+            {
+                throw new ArgumentException("A non-empty event kind is required.", "kind");
+            }
+            if (string.IsNullOrWhiteSpace(title))
+            {
+                throw new ArgumentException("A non-empty event title is required.", "title");
+            }
+            if (string.IsNullOrWhiteSpace(body))
+            {
+                throw new ArgumentException("A non-empty event body is required.", "body");
+            }
+            if (string.IsNullOrWhiteSpace(situation))
+            {
+                throw new ArgumentException(
+                    "A non-empty event situation is required.", "situation");
+            }
+
+            MissionRecord mission = RequireMission(missionId);
+            string eventBody = body.Trim();
+            string eventSituation = situation.Trim();
+            mission.FlightDurationSeconds = Math.Max(
+                mission.FlightDurationSeconds, flightTimeSeconds);
+            mission.LastBody = eventBody;
+            mission.LastSituation = eventSituation;
+            AddUnique(mission.VisitedBodies, eventBody);
+
+            var entry = new MissionEvent
+            {
+                EventId = Guid.NewGuid().ToString("N"),
+                OperationId = string.IsNullOrWhiteSpace(operationId)
+                    ? null
+                    : operationId.Trim(),
+                Kind = kind.Trim(),
+                Title = title.Trim(),
+                RecordedUtc = DateTime.UtcNow.ToString("o"),
+                FlightTimeSeconds = flightTimeSeconds,
+                Body = eventBody,
+                Situation = eventSituation,
+                RelatedMissionIds = new List<string>(),
+                VesselIds = new List<string>()
+            };
+            if (mission.TrackedVesselIds != null && mission.TrackedVesselIds.Count > 0)
+            {
+                for (int index = 0; index < mission.TrackedVesselIds.Count; index++)
+                {
+                    AddUnique(entry.VesselIds, mission.TrackedVesselIds[index]);
+                }
+            }
+            else
+            {
+                AddUnique(entry.VesselIds, mission.VesselId);
+            }
+            mission.Events.Add(entry);
+            Save(UnityEngine.Time.realtimeSinceStartup);
+            return mission;
+        }
+
+        public MissionRecord ScenarioRecords(
+            string missionId,
+            double altitudeMeters,
+            double speedMetersPerSecond,
+            double gForce)
+        {
+            ValidateScenarioNumber(altitudeMeters, "altitude");
+            ValidateScenarioNumber(speedMetersPerSecond, "speed");
+            ValidateScenarioNumber(gForce, "g-force");
+            MissionRecord mission = RequireMission(missionId);
+            mission.MaximumAltitudeMeters = altitudeMeters;
+            mission.MaximumSpeedMetersPerSecond = speedMetersPerSecond;
+            mission.MaximumGForce = gForce;
+            Save(UnityEngine.Time.realtimeSinceStartup);
+            return mission;
+        }
+
+        public MissionRecord ScenarioNote(string missionId, string notes)
+        {
+            MissionRecord mission = RequireMission(missionId);
+            mission.Notes = notes == null ? string.Empty : notes.Trim();
+            Save(UnityEngine.Time.realtimeSinceStartup);
+            return mission;
+        }
+
+        public MissionRecord ScenarioCrew(string missionId, IList<string> crew)
+        {
+            var replacement = new List<string>();
+            if (crew != null)
+            {
+                for (int index = 0; index < crew.Count; index++)
+                {
+                    if (string.IsNullOrWhiteSpace(crew[index]))
+                    {
+                        throw new ArgumentException(
+                            "Crew names must be non-empty.", "crew");
+                    }
+                    AddUnique(replacement, crew[index].Trim());
+                }
+            }
+            MissionRecord mission = RequireMission(missionId);
+            mission.Crew = replacement;
+            Save(UnityEngine.Time.realtimeSinceStartup);
+            return mission;
+        }
+
+        public MissionRecord ScenarioReview(string missionId, string reason)
+        {
+            MissionRecord mission = RequireMission(missionId);
+            IList<string> vesselIds = mission.TrackedVesselIds.Count > 0
+                ? (IList<string>)mission.TrackedVesselIds
+                : mission.VesselIds;
+            _lineage.MarkNeedsReview(
+                mission,
+                reason,
+                MissionMoment.Now(
+                    mission.FlightDurationSeconds,
+                    mission.LastBody,
+                    mission.LastSituation),
+                "scenario-review-" + missionId,
+                vesselIds);
+            Save(UnityEngine.Time.realtimeSinceStartup);
+            return mission;
+        }
+
+        private static void ValidateScenarioNumber(double value, string label)
+        {
+            if (double.IsNaN(value) || double.IsInfinity(value) || value < 0.0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    label, label + " must be a finite, non-negative number.");
+            }
+        }
+
+        private static string ValidateScenarioText(string value, string label)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                throw new ArgumentException(
+                    label + " must be a non-empty string.", label);
+            }
+            return value.Trim();
         }
 
         private MissionRecord CreateFlightMission(

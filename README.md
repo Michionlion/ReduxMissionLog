@@ -55,6 +55,16 @@ The current validated baseline is 32 compiled resolver/migration/timeline scenar
 
 KSP save fixtures are intentionally not published because they can contain campaign and player data. To reproduce the test, save a controllable vessel named `Fly Safe-15` on Kerbin's launchpad in Flight, review the JSON for private data, and place it at `tests/fixtures/local/launchpad-fly-safe-15.json`. The runner also recognizes the same developer fixture under a sibling ReduxTestHarness checkout.
 
+## UI review gallery
+
+Generate a fixture-free gallery with a sibling ReduxTestHarness checkout:
+
+```powershell
+pwsh -NoProfile -File scripts/run-gallery.ps1
+```
+
+The run installs the mod, launches KSP 2, and writes ordered real in-game screenshots under `.test-results/review-gallery` together with the test report and an attached copy of the isolated review archive.
+
 ## Development
 
 Read [AGENTS.md](AGENTS.md) before changing the mod. Tests live under `tests/`; no product-specific behavior belongs in ReduxTestHarness.
